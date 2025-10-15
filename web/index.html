@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RiskGeo Solutions - Monitoramento Climático</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    <link rel="stylesheet" href="style.css">
+
+    <style>
+        :root {
+            --cor-faixa-escura: rgba(0, 50, 150, 0.85);
+            --cor-texto-claro: white;
+            --cor-texto-escuro: #003296;
+            --cor-fundo-dashboard: #F0F8FF;
+        }
+        body { margin: 0; padding: 0; font-family: 'Arial', sans-serif; }
+        #map-container, #dashboard-container, #monitor-room-container { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; transition: opacity 0.5s; }
+        #map-container { z-index: 100; }
+        #map { width: 100%; height: 100%; }
+        .app-header { position: absolute; top: 0; left: 0; right: 0; height: 75px; background-color: var(--cor-faixa-escura); color: var(--cor-texto-claro); z-index: 1001; padding: 0 25px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+        .header-top-row { width: 100%; display: flex; justify-content: space-between; align-items: center; padding-bottom: 5px; }
+        .app-logo { font-size: 1.8em; font-weight: 700; letter-spacing: 1px; color: var(--cor-texto-claro); text-decoration: none; cursor: pointer; }
+        .aviso-legal { font-size: 0.75em; color: #FFD700; width: 100%; text-align: left; margin-top: -5px; }
+        .header-links-group { display: flex; align-items: center; gap: 15px; }
+        .header-link, .header-link:visited { color: var(--cor-texto-claro); text-decoration: none; font-size: 1.1em; padding: 7px 12px; border: 1px solid var(--cor-texto-claro); border-radius: 4px; transition: background-color 0.3s; }
+        .header-link:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .leaflet-control-geocoder { position: absolute; top: 85px !important; left: 10px !important; z-index: 999; width: 245px !important; max-width: 300px !important; }
+        .leaflet-control-geocoder input { width: 100% !important; font-size: 22px !important; padding-top: 8px !important; padding-bottom: 8px !important; background-color: #000000 !important; color: white; border: 1px solid white; }
+        .leaflet-control-geocoder input::placeholder { color: #ccc; opacity: 1; }
+
+        /* PAINEL DE DADOS - Cor de fundo será setada via JS */
+        .data-panel {
+            position: absolute; top: 85px; right: 20px; z-index: 1000;
+            background-color: white; /* Cor inicial padrão */
+            padding: 15px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+            font-family: inherit; width: 280px;
+            border: none; /* Remove a borda */
+            transition: background-color 0.5s ease;
+        }
+
+        /* Classes para cores de texto baseadas no fundo */
+        .color-dark { color: #333; } /* Para fundos claros (Verde, Amarelo) */
+        .color-light { color: white; } /* Para fundos escuros (Vermelho, Laranja, Azul Marinho) */
+
+        /* Garante que todos os elementos internos mudem de cor */
+        .data-panel h2, #nome-cidade, .data-panel p, .data-panel .value {
+            color: inherit !important; /* Força herdar a cor do texto */
+        }
+
+        /* 🛑 NOVO: Estilo para o aviso de rodapé do mapa */
+        #map-footer-note {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.6);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 5px;
+            font-size: 0.8em;
+            text-align: center;
+        }
+
+        #monitor-room-btn { padding: 7px 12px; background-color: #3f51b5; color: white; border: 1px solid white; border-radius: 4px; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-weight: bold; font-size: 1.1em; transition: background-color 0.3s; }
+        #monitor-room-btn:hover { background-color: #303f9f; }
+        #monitor-room-container { background-color: #f4f4f4; padding: 20px; overflow-y: auto; display: none; padding-top: 95px; }
+        #monitor-room-content { width: 95%; max-width: 1400px; margin: 0 auto; padding-top: 20px; }
+        .monitor-header { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 20px; }
+
+        /* Estilo para a observação de rodapé na Sala de Monitoramento */
+        #monitor-footer-note {
+            text-align: center;
+            font-size: 0.9em;
+            color: #555;
+            padding: 15px 0;
+            margin-top: 30px;
+            border-top: 1px solid #ccc;
+        }
+
+        .nivel-VERDE { background-color: #008000; color: white; }
+        .nivel-AMARELO { background-color: #FFFF00; color: black; }
+        .nivel-LARANJA { background-color: #FFA500; color: white; }
+        .nivel-VERMELHO { background-color: #FF0000; color: white; }
+        .nivel-ERRO { background-color: #999999; color: white; }
+        .loading-row { text-align: center; font-style: italic; color: #666; font-size: 1.2em; padding: 20px; }
+        #back-to-map-from-monitor-btn { padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1em; transition: background-color 0.3s; }
+        #back-to-map-from-monitor-btn:hover { background-color: #0056b3; }
+        #dashboard-container { display: none; padding-top: 95px; }
+        #dashboard-content { width: 95%; max-width: 1400px; margin: 0 auto; }
+        .charts-container { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 20px; margin-top: 20px; }
+        #pluviometria-card, #previsao-card { position: relative; flex: 1; min-width: 400px; height: 45vh; padding: 15px; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-radius: 8px; }
+        #capitais-grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .capital-card { background: white; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); padding: 20px; display: flex; justify-content: space-between; align-items: center; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .capital-card:hover { transform: translateY(-5px); box-shadow: 0 6px 12px rgba(0,0,0,0.15); }
+        .card-city-name { font-size: 1.2em; font-weight: 600; color: #333; }
+        .card-risk-level { padding: 8px 15px; border-radius: 5px; font-weight: bold; font-size: 0.9em; text-align: center; min-width: 110px; }
+        .capital-marker-icon { background-color: #fff; border: 2px solid white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.4); color: white; font-size: 14px; font-weight: bold; text-align: center; line-height: 26px; width: 30px; height: 30px; }
+        .dashboard-header { position: relative; text-align: center; padding: 10px 0; margin-bottom: 20px; border-bottom: 1px solid #ddd; }
+        #back-to-map-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; }
+        #back-to-map-btn:hover { background-color: #0056b3; }
+        .seletor-container { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; margin-bottom: 20px; font-size: 1.1em; }
+
+        .dashboard-details-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; margin-top: 20px; }
+        .dashboard-details-grid .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.05); text-align: center; border: 1px solid #eee; }
+        .dashboard-details-grid .card h4 { margin: 0 0 10px 0; font-size: 0.9em; color: #555; font-weight: normal; }
+        .dashboard-details-grid .card .large-value { margin: 0; font-size: 1.5em; font-weight: bold; color: var(--cor-texto-escuro); }
+    </style>
+</head>
+<body>
+
+    <header class="app-header">
+        <div class="header-top-row">
+            <a href="https://www.riskgeo.com.br" target="_blank" class="app-logo">RiskGeo Solutions</a>
+            <div class="header-links-group">
+                <button id="monitor-room-btn">Sala de Monitoramento</button>
+                <a href="https://www.riskgeo.com.br" target="_blank" class="header-link">Site</a>
+            </div>
+        </div>
+        <span class="aviso-legal">AVISO: Dados para fins demonstrativos. Não utilizar como ferramenta de risco operacional.</span>
+    </header>
+
+    <div id="map-container">
+        <div id="map"></div>
+        <div id="alerta-panel" class="data-panel">
+            <h2 id="alerta-titulo"></h2>
+            <p id="nome-cidade">Carregando Local...</p>
+            <p>Chuva Acumulada (72h): <span id="chuva-agora" class="value">Aguardando...</span></p>
+            <p>Previsão Chuva (72h): <span id="chuva-futura" class="value">Aguardando...</span></p>
+            <p>Temperatura Atual: <span id="temperatura" class="value">Aguardando...</span></p>
+            <button id="open-dashboard-btn" style="width:100%; margin-top:10px; padding: 8px;">Ver Gráfico de Pluviometria</button>
+        </div>
+
+        <!-- 🛑 NOVO: Aviso de rodapé no mapa -->
+        <div id="map-footer-note">
+            NOTA: As faixas de níveis de risco atuais foram alteradas unicamente para a verificação das funcionalidades da aplicação.
+        </div>
+    </div>
+
+    <div id="monitor-room-container" style="display: none;">
+        <div id="monitor-room-content">
+            <header class="monitor-header">
+                <button id="back-to-map-from-monitor-btn">← Voltar ao Mapa</button>
+            </header>
+            <div id="capitais-grid-container">
+                <div class="loading-row">Aguardando dados das cidades...</div>
+            </div>
+
+            <!-- Observação de rodapé na Sala de Monitoramento -->
+            <div id="monitor-footer-note">
+                NOTA: As faixas de níveis de risco atuais foram alteradas unicamente para a verificação das funcionalidades da aplicação.
+            </div>
+
+        </div>
+    </div>
+
+    <div id="dashboard-container" style="display: none;">
+        <div id="dashboard-content">
+            <header class="dashboard-header">
+                <h1 id="dashboard-title">Pluviometria Histórica para [Cidade]</h1>
+                <button id="back-to-map-btn">← Voltar ao Mapa</button>
+            </header>
+            <div class="seletor-container">
+                <label for="periodo-selector">Período Histórico:</label>
+                <select id="periodo-selector">
+                    <option value="24">24 horas</option>
+                    <option value="48">48 horas</option>
+                    <option value="72" selected>72 horas</option>
+                    <option value="96">96 horas</option>
+                </select>
+                <span id="municipio-display"></span>
+                <button id="toggle-detalhes-btn" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Ver Detalhes Adicionais</button>
+            </div>
+            <div id="detalhes-adicionais-container" style="display: none;">
+                <h2 style="margin-top: 0; color: #003296;">Informações Detalhadas (Atual)</h2>
+                <div class="dashboard-details-grid">
+                    <div class="card"><h4>Condição Atual</h4><p id="detail-descricao" class="large-value">--</p></div>
+                    <div class="card"><h4>Sensação Térmica</h4><p id="detail-feels-like" class="large-value">--</p></div>
+                    <div class="card"><h4>Umidade Relativa</h4><p id="detail-humidity" class="large-value">--</p></div>
+                    <div class="card"><h4>Ponto de Orvalho</h4><p id="detail-dewpoint" class="large-value">--</p></div>
+                    <div class="card"><h4>Pressão Atmosférica</h4><p id="detail-pressure" class="large-value">--</p></div>
+                    <div class="card"><h4>Vento Atual (10m)</h4><p id="detail-wind" class="large-value">--</p></div>
+                    <div class="card"><h4>Rajada de Vento (Máx)</h4><p id="detail-gusts" class="large-value">--</p></div>
+                </div>
+            </div>
+            <div class="charts-container">
+                <div id="pluviometria-card">
+                    <h2 style="text-align:center;">Pluviometria Acumulada (Histórico)</h2>
+                    <canvas id="pluvioChart"></canvas>
+                </div>
+                <div id="previsao-card">
+                    <h2 style="text-align:center;">Pluviometria Acumulada (Previsão)</h2>
+                    <canvas id="previsaoChart"></canvas>
+                </div>
+            </div>
+            <div id="monthlyChartContainer" style="display:none;"><h2 style="text-align:center;">Histórico Anual: Temperatura Média e Precipitação Total (Mensal)</h2><canvas id="monthlyChart"></canvas></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
