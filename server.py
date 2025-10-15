@@ -235,6 +235,8 @@ def get_forecast_chart_data():
         return jsonify({"error": str(e)}), 500
 
 
+# --- Bloco de execução para desenvolvimento local ---
+# Este bloco SÓ é executado quando você roda `python server.py`
+# O Gunicorn (servidor de produção) ignora este bloco completamente.
 if __name__ == '__main__':
-    print("Iniciando servidor Flask em http://127.0.0.1:5000/")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True)

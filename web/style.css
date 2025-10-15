@@ -1,0 +1,63 @@
+/* ========================================================== */
+/* ESTILOS PARA DISPOSITIVOS MÓVEIS (RESPONSIVIDADE)          */
+/* ========================================================== */
+@media (max-width: 768px) {
+
+    /* Ajusta o cabeçalho para telas pequenas */
+    .app-header {
+        height: auto; /* Altura automática para caber o conteúdo */
+        padding: 15px;
+    }
+    .header-top-row {
+        flex-direction: column; /* Empilha os itens verticalmente */
+        align-items: flex-start; /* Alinha à esquerda */
+        gap: 15px; /* Espaço entre o logo e os botões */
+    }
+    .app-logo {
+        font-size: 1.5em; /* Reduz um pouco o logo */
+    }
+
+    /* Reposiciona a barra de pesquisa para ocupar a largura */
+    .leaflet-control-geocoder {
+        top: 130px !important; /* Desce para baixo do cabeçalho */
+        left: 10px !important;
+        right: 10px !important;
+        width: auto !important; /* Ocupa a largura disponível */
+    }
+
+    /* Reposiciona o painel de dados para a parte de baixo */
+    .data-panel {
+        top: auto; /* Remove o 'top' fixo */
+        bottom: 20px; /* Posiciona na base */
+        left: 10px;
+        right: 10px;
+        width: auto; /* Largura automática */
+        z-index: 1001; /* Garante que fique acima de outros elementos do mapa */
+    }
+
+    /* Ajusta o dashboard para telas pequenas */
+    .charts-container {
+        flex-direction: column; /* Gráficos sempre um em cima do outro */
+    }
+    #pluviometria-card, #previsao-card {
+        min-width: 90%; /* Remove a largura mínima fixa */
+        height: 40vh; /* Altura um pouco menor */
+    }
+    .seletor-container, .dashboard-header {
+        flex-direction: column;
+        align-items: stretch; /* Itens ocupam toda a largura */
+        text-align: center;
+    }
+    #back-to-map-btn {
+        position: static; /* Remove o posicionamento absoluto */
+        transform: none;
+        margin-top: 10px;
+    }
+
+    /* Ajusta a grade de cidades na Sala de Monitoramento */
+    #capitais-grid-container {
+        /* A configuração atual com auto-fill já é bem responsiva! */
+        /* Podemos apenas garantir que o mínimo seja um pouco menor se necessário */
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    }
+}

@@ -3,263 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bem-vindo ao RiskGeo 360</title>
+    <title>RiskGeo Solutions - Monitoramento Climático</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    <link rel="stylesheet" href="style.css">
+
     <style>
         :root {
-            --cor-verde-destaque: #28a745;
-            --cor-fundo-azul-translucido: rgba(0, 100, 255, 0.25);
             --cor-faixa-escura: rgba(0, 50, 150, 0.85);
+            --cor-texto-claro: white;
             --cor-texto-escuro: #003296;
-            --cor-texto-principal: white;
+            --cor-fundo-dashboard: #F0F8FF;
         }
-
-        /* Garante que html e body ocupem 100% e não tenham margem */
-        html, body {
-            width: 100%;
-            height: 100%;
-        }
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            font-family: 'Arial', sans-serif;
-            color: var(--cor-texto-principal);
-        }
-
-        /* Cabeçalho fixo */
-        .app-header {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 75px;
-            background-color: var(--cor-faixa-escura);
-            color: white;
-            z-index: 1001;
-            padding: 0 25px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: flex-start;
-        }
-
-        .header-top-row {
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding-bottom: 5px;
-        }
-
-        .app-logo {
-            font-size: 2em;
-            font-weight: 700;
-            color: white;
-            text-decoration: none;
-        }
-
-        .header-geo-logo {
-            display: flex;
-            align-items: center;
-            color: #fff;
-            height: 100%;
-        }
-        .header-geo-logo img {
-            height: 60px;
-            margin-left: 10px;
-        }
-
-        .risk-disclaimer-header {
-            width: 100%;
-            text-align: left;
-            font-size: 0.75em;
-            font-weight: bold;
-            color: #dc3545;
-            text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
-            margin-top: -5px;
-        }
-
-
-        /* Fundo de vídeo */
-        #video-background {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            z-index: -2;
-        }
-
-        /* Camada translúcida azul sobre o vídeo */
-        .overlay-azul {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: var(--cor-fundo-azul-translucido);
-            z-index: -1;
-        }
-
-        /* Container principal */
-        #intro-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            text-align: center;
-            padding-top: 75px;
-            box-sizing: border-box;
-            color: var(--cor-texto-principal);
-        }
-
-        /* Conteúdo transparente (sem card) */
-        .intro-content {
-            background: none;
-            border-radius: 0;
-            box-shadow: none;
-            max-width: 100%;
-            z-index: 10;
-            padding: 40px 5vw;
-            font-weight: normal;
-            text-transform: uppercase;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .main-logo-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 25px;
-        }
-
-        .main-logo-container img {
-            height: 120px;
-            margin-right: 15px;
-        }
-
-        .main-logo-container h1 {
-            font-size: 5em;
-            margin: 0;
-            color: white;
-            text-shadow: 1px 1px 6px rgba(0,0,0,0.9);
-        }
-
-        .h1-360 {
-            display: block;
-            color: var(--cor-verde-destaque);
-            font-size: 0.8em;
-            line-height: 0.8;
-            font-weight: bold;
-            text-transform: none;
-        }
-
-        .tagline {
-            font-size: 1.6em;
-            margin-bottom: 5px;
-            font-weight: normal;
-            color: white;
-            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
-        }
-
-        .features-list {
-            list-style: none;
-            padding: 0;
-            margin: 30px 0;
-            text-align: left;
-        }
-
-        .features-list li {
-            font-size: 1.4em;
-            margin-bottom: 18px;
-            display: flex;
-            align-items: center;
-            color: white;
-            font-weight: normal;
-            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
-            justify-content: center;
-            text-align: left;
-        }
-
-        .features-list li::before {
-            content: '✓';
-            color: var(--cor-verde-destaque);
-            font-size: 1.6em;
-            margin-right: 15px;
-        }
-
-        #enter-app-btn {
-            background-color: var(--cor-verde-destaque);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            padding: 18px 45px;
-            font-size: 1.4em;
-            font-weight: bold;
-            cursor: pointer;
-            text-decoration: none;
-            transition: background-color 0.3s, transform 0.2s;
-            box-shadow: 2px 2px 10px rgba(0,0,0,0.5);
-            margin-top: 20px;
-        }
-
-        #enter-app-btn:hover {
-            background-color: #1e7e34;
-            transform: translateY(-2px);
-        }
+        body { margin: 0; padding: 0; font-family: 'Arial', sans-serif; }
+        #map-container, #dashboard-container, #monitor-room-container { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; transition: opacity 0.5s; }
+        #map-container { z-index: 100; }
+        #map { width: 100%; height: 100%; }
+        .app-header { position: absolute; top: 0; left: 0; right: 0; height: 75px; background-color: var(--cor-faixa-escura); color: var(--cor-texto-claro); z-index: 1001; padding: 0 25px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+        .header-top-row { width: 100%; display: flex; justify-content: space-between; align-items: center; padding-bottom: 5px; }
+        .app-logo { font-size: 1.8em; font-weight: 700; letter-spacing: 1px; color: var(--cor-texto-claro); text-decoration: none; cursor: pointer; }
+        .aviso-legal { font-size: 0.75em; color: #FFD700; width: 100%; text-align: left; margin-top: -5px; }
+        .header-links-group { display: flex; align-items: center; gap: 15px; }
+        .header-link, .header-link:visited { color: var(--cor-texto-claro); text-decoration: none; font-size: 1.1em; padding: 7px 12px; border: 1px solid var(--cor-texto-claro); border-radius: 4px; transition: background-color 0.3s; }
+        .header-link:hover { background-color: rgba(255, 255, 255, 0.2); }
+        .leaflet-control-geocoder { position: absolute; top: 85px !important; left: 10px !important; z-index: 999; width: 245px !important; max-width: 300px !important; }
+        .leaflet-control-geocoder input { width: 100% !important; font-size: 22px !important; padding-top: 8px !important; padding-bottom: 8px !important; background-color: #000000 !important; color: white; border: 1px solid white; }
+        .leaflet-control-geocoder input::placeholder { color: #ccc; opacity: 1; }
+        #welcome-container { width: 100%; height: 100vh; display: flex; justify-content: center; align-items: center; color: white; text-align: center; position: relative; overflow: hidden; }
+        #bg-video { position: absolute; top: 50%; left: 50%; min-width: 100%; min-height: 100%; width: auto; height: auto; z-index: -100; transform: translateX(-50%) translateY(-50%); background-size: cover; }
+        .welcome-overlay { background: rgba(0, 20, 60, 0.6); padding: 40px; border-radius: 15px; max-width: 800px; }
+        .welcome-logo-container { display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 20px; }
+        .welcome-logo { width: 100px; height: 100px; }
+        .welcome-title { font-size: 3.5em; font-weight: bold; text-shadow: 2px 2px 4px #000000; }
+        .welcome-subtitle { font-size: 1.5em; margin-bottom: 30px; }
+        .welcome-features { list-style: none; padding: 0; margin-bottom: 40px; text-align: left; display: inline-block; }
+        .welcome-features li { font-size: 1.2em; margin-bottom: 15px; display: flex; align-items: center; }
+        .welcome-features li::before { content: '✓'; color: #00FF00; font-size: 1.5em; margin-right: 15px; }
+        .enter-btn { background-color: #28a745; color: white; padding: 15px 40px; text-decoration: none; font-size: 1.5em; font-weight: bold; border-radius: 8px; transition: background-color 0.3s, transform 0.2s; }
+        .enter-btn:hover { background-color: #218838; transform: scale(1.05); }
     </style>
 </head>
 <body>
 
-    <!-- Cabeçalho -->
-    <header class="app-header">
-        <!-- Linha Superior (Nome da Empresa E Logo do Software) -->
-        <div class="header-top-row">
-            <span class="app-logo">RISKGEO SOLUTIONS</span>
-            <div class="header-geo-logo">
-                <img src="logo-riskgeo360.png"
-                        onerror="this.onerror=null; this.src='https://placehold.co/100x100/28a745/ffffff?text=360'"
-                        alt="Logo RiskGeo 360">
+    <div id="welcome-container">
+        <video autoplay muted loop id="bg-video">
+            <source src="terra.mp4" type="video/mp4">
+            Seu navegador não suporta vídeos.
+        </video>
+
+        <div class="welcome-overlay">
+            <div class="welcome-logo-container">
+                <img src="logo-riskgeo360.png" alt="Logo RiskGeo 360" class="welcome-logo">
+                <h1 class="welcome-title">RISKGEO 360</h1>
             </div>
-        </div>
-
-        <div class="risk-disclaimer-header">
-            ESTA FERRAMENTA NÃO DEVE SER UTILIZADA COMO FONTE DE ANÁLISE DE RISCOS.
-        </div>
-    </header>
-
-    <!-- Vídeo de fundo -->
-    <video autoplay muted loop id="video-background">
-        <source src="terra.mp4" type="video/mp4">
-        Seu navegador não suporta a tag de vídeo.
-    </video>
-
-    <!-- Camada azul translúcida (para melhorar o contraste) -->
-    <div class="overlay-azul"></div>
-
-    <!-- Conteúdo Central (Apresentação) -->
-    <div id="intro-container">
-        <div class="intro-content">
-            <div class="main-logo-container">
-                <img src="logo-riskgeo360.png"
-                        onerror="this.onerror=null; this.src='https://placehold.co/150x150/28a745/ffffff?text=360'"
-                        alt="Logo RiskGeo 360">
-                <h1>RISKGEO <span class="h1-360">360</span></h1>
-            </div>
-
-            <p class="tagline">MONITORAMENTO GEOCLIMÁTICO INTELIGENTE.</p>
-
-            <ul class="features-list">
+            <p class="welcome-subtitle">MONITORAMENTO GEOCLIMÁTICO INTELIGENTE.</p>
+            <ul class="welcome-features">
                 <li>VISUALIZAÇÃO DE DADOS CLIMÁTICOS EM MAPA INTERATIVO.</li>
                 <li>BUSCA DE INFORMAÇÕES PARA QUALQUER LOCALIDADE.</li>
                 <li>MONITORAMENTO EM TEMPO REAL DAS PRINCIPAIS CIDADES.</li>
                 <li>ANÁLISE DETALHADA COM GRÁFICOS DE PLUVIOMETRIA.</li>
             </ul>
-
-            <a href="index.html" id="enter-app-btn">ENTRAR</a>
+            <a href="/index.html" class="enter-btn">ENTRAR</a>
         </div>
     </div>
 
