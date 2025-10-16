@@ -1,12 +1,13 @@
 // Constantes e Variáveis Globais
-const INITIAL_LATITUDE = -15.78;       // Latitude de Brasília (centro do mapa)
-const INITIAL_LONGITUDE = -47.92;      // Longitude de Brasília (centro do mapa)
-const ZOOM_LEVEL = 4;                  // Nível de zoom para ver o Brasil
+const INITIAL_LATITUDE = -15.78;
+const INITIAL_LONGITUDE = -47.92;
+const ZOOM_LEVEL = 4;
 let updateIntervalId = null;
 let currentCoords = { lat: INITIAL_LATITUDE, lon: INITIAL_LONGITUDE };
-let currentCityName = "Brasília"; // Cidade inicial para carregar os dados
+let currentCityName = "Brasília";
 let currentCharts = {};
 let pluvioChartInstance = null;
+let lastMapView = null; // Variável para guardar o estado do mapa
 
 // Mapeamento de níveis de risco para texto
 const riskTextMap = {
@@ -19,10 +20,10 @@ const riskTextMap = {
 
 // Mapeamento de cor para Nível (para o painel lateral)
 const colorToRiskMap = {
-    "#008000": "Observação", // Verde
-    "#FFFF00": "Atenção",    // Amarelo
-    "#FFA500": "Alto Risco", // Laranja
-    "#FF0000": "Risco Extremo",// Vermelho
+    "#008000": "Observação",
+    "#FFFF00": "Atenção",
+    "#FFA500": "Alto Risco",
+    "#FF0000": "Risco Extremo",
     "#999": "Carregando"
 };
 
@@ -50,31 +51,34 @@ const backToMapFromMonitorBtn = document.getElementById('back-to-map-from-monito
 const capitaisGridContainer = document.getElementById('capitais-grid-container');
 const alertaTituloElement = document.getElementById('alerta-titulo');
 
-
-// Mapeamento dos Cards de Detalhe
-const detailDescricao = document.getElementById('detail-descricao');
-const detailFeelsLike = document.getElementById('detail-feels-like');
-const detailHumidity = document.getElementById('detail-humidity');
-const detailDewpoint = document.getElementById('detail-dewpoint');
-const detailPressure = document.getElementById('detail-pressure');
-const detailWind = document.getElementById('detail-wind');
-const detailGusts = document.getElementById('detail-gusts');
+// ==========================================================
+// FUNÇÕES AUXILIARES
+// ==========================================================
+function converterCodigoTempo(code) {
+    const codes = {
+        0: "Céu Limpo", 1: "Céu Parcialmente Nublado", 2: "Céu Nublado", 3: "Céu Encoberto",
+        45: "Neblina", 48: "Névoa", 51: "Chuvisco Leve", 53: "Chuvisco Moderado", 55: "Chuvisco Intenso",
+        61: "Chuva Leve", 63: "Chuva Moderada", 65: "Chuva Forte", 80: "Pancadas de Chuva Leve",
+        81: "Pancadas de Chuva Moderada", 82: "Pancadas de Chuva Forte", 95: "Tempestade",
+        96: "Tempestade com Granizo Leve", 99: "Tempestade com Granizo Forte"
+    };
+    return codes[code] || `Cód. ${code}`;
+}
 
 
 // ==========================================================
 // FUNÇÕES DE NAVEGAÇÃO E SALA DE MONITORAMENTO
 // ==========================================================
-
 function showDashboard() {
     mapContainer.style.display = 'none';
     monitorRoomContainer.style.display = 'none';
     dashboardContainer.style.display = 'block';
     dashboardTitle.textContent = `Pluviometria Histórica para ${currentCityName}`;
-    municipioDisplay.textContent = `Município: ${currentCityName}/SP - Estação: Modelo ERA5`;
+    municipioDisplay.textContent = `Município: ${currentCityName} - Estação: Modelo ERA5`;
     periodoSelector.value = '72';
     fetchAndRenderPluvioChart(currentCoords.lat, currentCoords.lon, currentCityName, periodoSelector.value);
     fetchAndRenderForecastChart(currentCoords.lat, currentCoords.lon, currentCityName);
-    fetchAndPreFillDetails(currentCoords.lat, currentCoords.lon, currentCityName);
+    fetchAndRenderDetailCards(currentCoords.lat, currentCoords.lon, currentCityName); // Busca os dados para os cards
     map.invalidateSize();
 }
 
@@ -82,9 +86,18 @@ function showMap() {
     dashboardContainer.style.display = 'none';
     monitorRoomContainer.style.display = 'none';
     mapContainer.style.display = 'block';
-    detalhesContainer.style.display = 'none';
-    toggleDetalhesBtn.textContent = 'Ver Detalhes Adicionais';
-    map.invalidateSize();
+    if(detalhesContainer) detalhesContainer.style.display = 'none';
+    if(toggleDetalhesBtn) toggleDetalhesBtn.textContent = 'Ver Detalhes Adicionais';
+
+    // Se um estado anterior do mapa foi salvo, restaura-o
+    if (lastMapView) {
+        map.setView(lastMapView.center, lastMapView.zoom);
+    }
+
+    // Garante que o mapa seja renderizado corretamente após a transição
+    setTimeout(() => {
+        map.invalidateSize();
+    }, 10);
 }
 
 function showMonitorRoom() {
@@ -95,23 +108,15 @@ function showMonitorRoom() {
 }
 
 async function fetchCapitaisRisco() {
-    capitaisGridContainer.innerHTML = '<div class="loading-row">Aguardando dados das cidades...</div>';
-    const API_CAPITAIS_URL = `/api/capitais_risco`;
-
+    capitaisGridContainer.innerHTML = '<div>Aguardando dados das cidades...</div>';
     try {
-        const response = await fetch(API_CAPITAIS_URL);
+        const response = await fetch(`/api/capitais_risco`);
         const dados = await response.json();
-
-        if (!response.ok || dados.error) {
-            console.error('Erro ao buscar dados das capitais:', dados.error);
-            capitaisGridContainer.innerHTML = `<div class="loading-row">ERRO: ${dados.error || 'Falha na comunicação com o servidor.'}</div>`;
-            return;
-        }
+        if (!response.ok || dados.error) throw new Error(dados.error || 'Falha na comunicação com o servidor.');
         renderCapitaisCards(dados);
-
     } catch (error) {
         console.error("Falha na rede ao buscar Sala de Monitoramento:", error);
-        capitaisGridContainer.innerHTML = `<div class="loading-row">ERRO DE CONEXÃO: Verifique o console do navegador e o terminal do servidor Flask.</div>`;
+        capitaisGridContainer.innerHTML = `<div>ERRO DE CONEXÃO: Verifique o console do navegador e o terminal do servidor Flask.</div>`;
     }
 }
 
@@ -119,305 +124,236 @@ function renderCapitaisCards(capitais) {
     capitaisGridContainer.innerHTML = '';
     let htmlContent = '';
     capitais.forEach(cidade => {
-        const riscoNivel = cidade.risco_nivel;
-        const riscoTexto = riskTextMap[riscoNivel] || 'Indefinido'; // Pega o texto do mapa
-
-        // 🛑 NOVO: Botão de Câmera (mantido como no ponto de salvamento 2)
-        const cameraButton = cidade.camera_url ?
-            `<a href="${cidade.camera_url}" target="_blank" class="camera-btn" style="background-color: #3f51b5; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; font-size: 0.9em; margin-top: 10px;">Ver Câmera</a>` :
-            '';
-
+        const riscoNivel = cidade.risco_nivel.nivel;
+        const riscoTexto = riskTextMap[riscoNivel] || 'Indefinido';
+        const cameraButton = cidade.camera_url ? `<a href="${cidade.camera_url}" target="_blank" class="camera-btn" style="background-color: #3f51b5; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; font-size: 0.9em; margin-top: 10px; display: inline-block;">Ver Câmera</a>` : '';
         htmlContent += `
-            <div class="capital-card" style="flex-direction: column; align-items: flex-start;">
+            <div class="capital-card">
                 <span class="card-city-name">${cidade.capital} (${cidade.estado})</span>
-                <span class="card-risk-level nivel-${riscoNivel}" title="Acumulado: ${cidade.maior_risco_valor !== undefined ? cidade.maior_risco_valor.toFixed(1) : '--'} mm" style="margin-top: 5px; margin-bottom: 5px;">
-                    ${riscoTexto}
-                </span>
+                <span class="card-risk-level nivel-${riscoNivel}" title="Maior Risco (Hist. ou Futuro): ${cidade.maior_risco_valor.toFixed(1)} mm">${riscoTexto}</span>
+                <div class="card-details" style="font-size: 0.9em; color: #333; margin-top: 10px;">
+                    <span>Acum. 24h: <strong>${cidade.chuva_24h.toFixed(1)} mm</strong></span><br>
+                    <span>Acum. 72h: <strong>${cidade.chuva_72h.toFixed(1)} mm</strong></span>
+                </div>
                 ${cameraButton}
-            </div>
-        `;
+            </div>`;
     });
     capitaisGridContainer.innerHTML = htmlContent;
 }
 
-const toggleDetalhes = () => {
-    const isHidden = detalhesContainer.style.display === 'none';
-    detalhesContainer.style.display = isHidden ? 'grid' : 'none';
-    toggleDetalhesBtn.textContent = isHidden ? 'Ocultar Detalhes Adicionais' : 'Ver Detalhes Adicionais';
-};
+if(toggleDetalhesBtn) {
+    toggleDetalhesBtn.onclick = () => {
+        const isHidden = detalhesContainer.style.display === 'none';
+        detalhesContainer.style.display = isHidden ? 'block' : 'none';
+        toggleDetalhesBtn.textContent = isHidden ? 'Ocultar Detalhes Adicionais' : 'Ver Detalhes Adicionais';
+    };
+}
 
-periodoSelector.onchange = function() {
-    fetchAndRenderPluvioChart(currentCoords.lat, currentCoords.lon, currentCityName, this.value);
-};
+if(periodoSelector) {
+    periodoSelector.onchange = function() {
+        fetchAndRenderPluvioChart(currentCoords.lat, currentCoords.lon, currentCityName, this.value);
+    };
+}
 
 openDashboardBtn.onclick = showDashboard;
 backToMapBtn.onclick = showMap;
-toggleDetalhesBtn.onclick = toggleDetalhes;
 monitorRoomBtn.onclick = showMonitorRoom;
 backToMapFromMonitorBtn.onclick = showMap;
 
-
 // ==========================================================
-// FUNÇÕES DE BUSCA DE DADOS
+// FUNÇÕES DE BUSCA DE DADOS E RENDERIZAÇÃO
 // ==========================================================
-
-function preencherCardsDetalhe(dados) {
-    detailDescricao.textContent = dados.descricao_tempo || '--';
-    detailFeelsLike.textContent = (dados.sensacao_termica !== undefined && dados.sensacao_termica !== null) ? `${dados.sensacao_termica.toFixed(1)} °C` : '--';
-    detailHumidity.textContent = (dados.umidade_relativa !== undefined && dados.umidade_relativa !== null) ? `${dados.umidade_relativa.toFixed(0)} %` : '--';
-    detailDewpoint.textContent = (dados.ponto_orvalho !== undefined && dados.ponto_orvalho !== null) ? `${dados.ponto_orvalho.toFixed(1)} °C` : '--';
-    detailPressure.textContent = (dados.pressao !== undefined && dados.pressao !== null) ? `${dados.pressao.toFixed(0)} hPa` : '--';
-    detailWind.textContent = (dados.velocidade_vento !== undefined && dados.velocidade_vento !== null) ? `${dados.velocidade_vento.toFixed(1)} km/h` : '--';
-    detailGusts.textContent = (dados.rajada_vento !== undefined && dados.rajada_vento !== null) ? `${dados.rajada_vento.toFixed(1)} km/h` : '--';
-}
-
-async function fetchAndPreFillDetails(latitude, longitude, nomeLocal) {
-    const API_URL = `/api/weather?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`;
-    try {
-        const response = await fetch(API_URL);
-        const dados = await response.json();
-        if (!response.ok || dados.error) {
-            console.error('Falha ao pré-carregar detalhes:', dados.error);
-            return;
-        }
-        preencherCardsDetalhe(dados);
-    } catch (error) {
-        console.error("Falha na rede ao pré-carregar detalhes:", error);
-    }
-}
-
-function determinarNivelAlerta(historico, futura) {
+async function determinarNivelAlerta(historico, futura) {
     const maiorRisco = Math.max(historico, futura);
-    if (maiorRisco >= 30) { return "#FF0000"; }
-    else if (maiorRisco >= 20) { return "#FFA500"; }
-    else if (maiorRisco >= 10) { return "#FFFF00"; }
-    else { return "#008000"; }
+    if (maiorRisco >= 30) return "#FF0000";
+    if (maiorRisco >= 20) return "#FFA500";
+    if (maiorRisco >= 10) return "#FFFF00";
+    return "#008000";
+}
+
+async function fetchAndRenderDetailCards(latitude, longitude, nomeLocal) {
+    try {
+        const response = await fetch(`/api/weather?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`);
+        if (!response.ok) throw new Error('Falha na resposta da API');
+        const dados = await response.json();
+
+        const detailsHtml = `
+            <h2 style="text-align: left; margin-bottom: 15px; color: #003296;">Informações Detalhadas (Atual)</h2>
+            <div class="details-grid">
+                <div class="detail-card">
+                    <span class="detail-label">Condição Atual</span>
+                    <span class="detail-value">${dados.descricao_tempo || '--'}</span>
+                </div>
+                <div class="detail-card">
+                    <span class="detail-label">Sensação Térmica</span>
+                    <span class="detail-value">${dados.sensacao_termica?.toFixed(1) || '--'} °C</span>
+                </div>
+                <div class="detail-card">
+                    <span class="detail-label">Umidade Relativa</span>
+                    <span class="detail-value">${dados.umidade_relativa?.toFixed(0) || '--'} %</span>
+                </div>
+                <div class="detail-card">
+                    <span class="detail-label">Ponto de Orvalho</span>
+                    <span class="detail-value">${dados.ponto_orvalho?.toFixed(1) || '--'} °C</span>
+                </div>
+                <div class="detail-card">
+                    <span class="detail-label">Pressão Atmosférica</span>
+                    <span class="detail-value">${dados.pressao?.toFixed(0) || '--'} hPa</span>
+                </div>
+                <div class="detail-card">
+                    <span class="detail-label">Vento Atual (10m)</span>
+                    <span class="detail-value">${dados.velocidade_vento?.toFixed(1) || '--'} km/h</span>
+                </div>
+                 <div class="detail-card">
+                    <span class="detail-label">Rajada de Vento (Máx)</span>
+                    <span class="detail-value">${dados.rajada_vento?.toFixed(1) || '--'} km/h</span>
+                </div>
+            </div>
+        `;
+        detalhesContainer.innerHTML = detailsHtml;
+
+    } catch (error) {
+        console.error("Falha ao carregar detalhes atuais:", error);
+        detalhesContainer.innerHTML = '<p>Erro ao carregar detalhes atuais.</p>';
+    }
 }
 
 async function fetchAndRenderPluvioChart(latitude, longitude, nomeLocal, periodoHoras) {
     dashboardTitle.textContent = `Carregando dados de ${periodoHoras}h para ${nomeLocal}...`;
-    const API_PLUVIO_URL = `/api/historical_pluvio?lat=${latitude}&lon=${longitude}&periodo=${periodoHoras}&nome_cidade=${encodeURIComponent(nomeLocal)}`;
     try {
-        const response = await fetch(API_PLUVIO_URL);
+        const response = await fetch(`/api/historical_pluvio?lat=${latitude}&lon=${longitude}&periodo=${periodoHoras}&nome_cidade=${encodeURIComponent(nomeLocal)}`);
         const data = await response.json();
-        if (!response.ok || data.error || data.volume_pluviometria === undefined) {
-            throw new Error(`Erro: ${data.error || 'Dados incompletos da API.'}`);
-        }
+        if (!response.ok || data.error || data.volume_pluviometria === undefined) throw new Error(data.error || 'Dados incompletos da API.');
         const hourlyData = data.volume_pluviometria || [];
-        const labels = data.data_pluviometria.map(t => {
-            const date = new Date(t + 'Z');
-            return date.toLocaleTimeString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(' ', '\n');
-        });
+        const labels = data.data_pluviometria.map(t => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ''));
         let acumulado = 0;
-        const acumuladoArray = hourlyData.map(val => {
-            if (val !== null) { acumulado += val; }
-            return acumulado;
-        });
+        const acumuladoArray = hourlyData.map(val => (acumulado += (val || 0)));
         const pluvioCtx = document.getElementById('pluvioChart').getContext('2d');
         if (currentCharts.pluvio) currentCharts.pluvio.destroy();
         currentCharts.pluvio = new Chart(pluvioCtx, {
             type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [
-                    { label: 'Pluviometria (mm)', data: hourlyData, backgroundColor: 'rgba(54, 162, 235, 0.7)', yAxisID: 'y-pluv', order: 2 },
-                    { label: `Acumulado ${periodoHoras}h: ${data.acumulado_total.toFixed(1)} mm`, data: acumuladoArray, type: 'line', borderColor: 'black', borderWidth: 2, pointRadius: 0, fill: false, yAxisID: 'y-pluv', order: 1 }
-                ]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                scales: {
-                    y: { id: 'y-pluv', type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Pluviometria (mm)' } },
-                    x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, font: { size: 10 } } }
-                }
-            }
+            data: { labels, datasets: [ { label: 'Pluviometria (mm)', data: hourlyData, backgroundColor: 'rgba(54, 162, 235, 0.7)', yAxisID: 'y-pluv', order: 2 }, { label: `Acumulado ${periodoHoras}h: ${data.acumulado_total.toFixed(1)} mm`, data: acumuladoArray, type: 'line', borderColor: 'black', borderWidth: 2, pointRadius: 0, fill: false, yAxisID: 'y-pluv', order: 1 } ] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { id: 'y-pluv', position: 'left', beginAtZero: true, title: { display: true, text: 'Pluviometria (mm)' } }, x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, font: { size: 10 } } } } }
         });
         dashboardTitle.textContent = `Pluviometria Histórica para ${data.cidade}`;
         municipioDisplay.textContent = `Município: ${data.municipio} | Total Acumulado: ${data.acumulado_total.toFixed(1)} mm`;
     } catch (error) {
-        console.error("Falha ao carregar Gráfico de Pluviometria:", error);
         dashboardTitle.textContent = `ERRO ao carregar Pluviometria: ${error.message}`;
-        municipioDisplay.textContent = 'Verifique as datas históricas (máximo 4 dias atrás).';
     }
 }
 
 async function fetchAndRenderForecastChart(latitude, longitude, nomeLocal) {
-    const API_CHART_URL = `/api/forecast_chart?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`;
     try {
-        const forecastResponse = await fetch(API_CHART_URL);
-        const forecastData = await forecastResponse.json();
-        if (!forecastResponse.ok || forecastData.error || !forecastData.hourly) {
-            throw new Error(`Erro: ${forecastData.error || 'Dados de previsão incompletos.'}`);
-        }
+        const response = await fetch(`/api/forecast_chart?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`);
+        const forecastData = await response.json();
+        if (!response.ok || forecastData.error || !forecastData.hourly) throw new Error(forecastData.error || 'Dados de previsão incompletos.');
+
         const hourlyData = forecastData.hourly.precipitation.slice(0, 72) || [];
         const timeLabels = forecastData.hourly.time.slice(0, 72) || [];
         let acumulado = 0;
-        const acumuladoArray = hourlyData.map(val => {
-            if (val !== null) { acumulado += val; }
-            return acumulado;
-        });
-        const acumuladoTotal = acumulado;
-        const labels = timeLabels.map(t => {
-            const date = new Date(t);
-            return date.toLocaleTimeString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(' ', '\n');
-        });
+        const acumuladoArray = hourlyData.map(val => (acumulado += (val || 0)));
+        const labels = timeLabels.map(t => new Date(t).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ''));
         const previsaoCtx = document.getElementById('previsaoChart').getContext('2d');
         if (currentCharts.previsao) currentCharts.previsao.destroy();
         currentCharts.previsao = new Chart(previsaoCtx, {
             type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [
-                    { label: 'Pluviometria Prevista (mm)', data: hourlyData, backgroundColor: 'rgba(255, 159, 64, 0.7)', yAxisID: 'y-pluv', order: 2 },
-                    { label: `Acumulado Futuro: ${acumuladoTotal.toFixed(1)} mm`, data: acumuladoArray, type: 'line', borderColor: '#FF4500', borderWidth: 2, pointRadius: 0, fill: false, yAxisID: 'y-pluv', order: 1 }
-                ]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                scales: {
-                    y: { id: 'y-pluv', type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Pluviometria (mm)' } },
-                    x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, font: { size: 10 } } }
-                }
-            }
+            data: { labels, datasets: [ { label: 'Pluviometria Prevista (mm)', data: hourlyData, backgroundColor: 'rgba(255, 159, 64, 0.7)', yAxisID: 'y-pluv', order: 2 }, { label: `Acumulado Futuro: ${acumulado.toFixed(1)} mm`, data: acumuladoArray, type: 'line', borderColor: '#FF4500', borderWidth: 2, pointRadius: 0, fill: false, yAxisID: 'y-pluv', order: 1 } ] },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { id: 'y-pluv', position: 'left', beginAtZero: true, title: { display: true, text: 'Pluviometria (mm)' } }, x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 45, font: { size: 10 } } } } }
         });
     } catch (error) {
         console.error("Falha ao carregar Gráfico de Previsão:", error);
     }
 }
 
-
-// INICIALIZAÇÃO DO MAPA E FLUXO DE DADOS
+// ==========================================================
+// INICIALIZAÇÃO E MANIPULAÇÃO DO MAPA
+// ==========================================================
 const map = L.map('map').setView([INITIAL_LATITUDE, INITIAL_LONGITUDE], ZOOM_LEVEL);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
 
-const geocoder = L.Control.geocoder({
-    position: 'topleft',
-    collapsed: false,
-    placeholder: 'Pesquisar cidade aqui...',
-    title: 'Pesquisar uma nova localização',
-    defaultMarkGeocode: false
-}).addTo(map);
-
-geocoder.on('markgeocode', function (e) {
-    const lat = e.geocode.center.lat;
-    const lon = e.geocode.center.lng;
-    const nomeCurto = e.geocode.name.split(',')[0].trim();
-    map.setView([lat, lon], 13);
-    processarNovoLocal(lat, lon, nomeCurto);
+const geocoder = L.Control.geocoder({ position: 'topleft', collapsed: false, placeholder: 'Pesquisar cidade aqui...', defaultMarkGeocode: false }).addTo(map);
+geocoder.on('markgeocode', e => {
+    const { center, name } = e.geocode;
+    // Salva a visualização do mapa ANTES de aplicar o zoom da busca
+    lastMapView = { center: map.getCenter(), zoom: map.getZoom() };
+    map.setView(center, 13);
+    processarNovoLocal(center.lat, center.lng, name.split(',')[0].trim());
 });
 
 function processarNovoLocal(latitude, longitude, nomeLocal) {
-    if (updateIntervalId) { clearInterval(updateIntervalId); updateIntervalId = null; }
+    if (updateIntervalId) clearInterval(updateIntervalId);
     currentCoords = { lat: latitude, lon: longitude };
     currentCityName = nomeLocal;
-
     nomeCidadeElement.textContent = nomeLocal;
     carregarDadosClimaticos(latitude, longitude, nomeLocal);
-    updateIntervalId = setInterval(() => { carregarDadosClimaticos(currentCoords.lat, currentCoords.lon, currentCityName); }, 60000);
+    updateIntervalId = setInterval(() => carregarDadosClimaticos(currentCoords.lat, currentCoords.lon, currentCityName), 600000); // 10 min
 }
 
 async function carregarDadosClimaticos(latitude, longitude, nomeLocal) {
-    const API_URL = `/api/weather?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`;
     tempElement.textContent = "Carregando...";
     chuvaHistElement.textContent = "Carregando...";
     chuvaFutElement.textContent = "Carregando...";
     nomeCidadeElement.textContent = nomeLocal;
     alertaPanel.style.backgroundColor = 'white';
-    const alertaTituloElement = document.getElementById('alerta-titulo');
-
     try {
-        const resposta = await fetch(API_URL);
-        if (!resposta.ok) {
-            const erro = await resposta.json();
-            throw new Error(`Erro ${resposta.status}: ${erro.error}`);
-        }
-        const dados = await resposta.json();
-        const nomeReal = dados.cidade_nome || nomeLocal;
-        const volumeChuvaHist = dados.chuva_72h_hist || 0;
-        const volumeChuvaFut = dados.chuva_72h_fut || 0;
-        const corAlerta = determinarNivelAlerta(volumeChuvaHist, volumeChuvaFut);
-
-        // 🛑 Lógica para obter o nome do nível
-        let nivelNome = colorToRiskMap[corAlerta] || 'Nível Indefinido';
-
-        // 🛑 ATUALIZA O TÍTULO
-        alertaTituloElement.textContent = `Nível: ${nivelNome}`;
-
-        // 🛑 ATUALIZA O FUNDO E AS CLASSES DE COR DO TEXTO
+        const response = await fetch(`/api/weather?lat=${latitude}&lon=${longitude}&nome_cidade=${encodeURIComponent(nomeLocal)}`);
+        if (!response.ok) throw new Error('Falha na resposta da API');
+        const dados = await response.json();
+        const corAlerta = await determinarNivelAlerta(dados.chuva_72h_hist || 0, dados.chuva_72h_fut || 0);
+        alertaTituloElement.textContent = `Nível: ${colorToRiskMap[corAlerta] || 'Indefinido'}`;
         alertaPanel.style.backgroundColor = corAlerta;
-
-        if (corAlerta === "#FFFF00" || corAlerta === "#008000") {
-            alertaPanel.classList.add('color-dark');
-            alertaPanel.classList.remove('color-light');
-        } else {
-            alertaPanel.classList.add('color-light');
-            alertaPanel.classList.remove('color-dark');
-        }
-
-        nomeCidadeElement.textContent = nomeReal;
-        tempElement.textContent = dados.temperatura.toFixed(2) + "°C";
-        chuvaHistElement.textContent = volumeChuvaHist.toFixed(1) + " mm";
-        chuvaFutElement.textContent = volumeChuvaFut.toFixed(1) + " mm";
-
+        alertaPanel.classList.toggle('color-dark', corAlerta === "#FFFF00" || corAlerta === "#FFFFFF");
+        alertaPanel.classList.toggle('color-light', corAlerta !== "#FFFF00" && corAlerta !== "#FFFFFF");
+        nomeCidadeElement.textContent = dados.cidade_nome || nomeLocal;
+        tempElement.textContent = (dados.temperatura != null ? dados.temperatura.toFixed(1) : '--') + "°C";
+        chuvaHistElement.textContent = (dados.chuva_72h_hist != null ? dados.chuva_72h_hist.toFixed(1) : '--') + " mm";
+        chuvaFutElement.textContent = (dados.chuva_72h_fut != null ? dados.chuva_72h_fut.toFixed(1) : '--') + " mm";
     } catch (error) {
-        // 🛑 Tratamento de erro para o título
         alertaTituloElement.textContent = `ERRO DE DADOS`;
         alertaPanel.style.backgroundColor = 'white';
         alertaPanel.classList.add('color-dark');
         alertaPanel.classList.remove('color-light');
-
         nomeCidadeElement.textContent = "ERRO NA BUSCA";
-        tempElement.textContent = "ERRO"; chuvaHistElement.textContent = "ERRO"; chuvaFutElement.textContent = "ERRO";
+        tempElement.textContent = "ERRO";
+        chuvaHistElement.textContent = "ERRO";
+        chuvaFutElement.textContent = "ERRO";
     }
 }
 
-async function fetchAndPlaceCapitaisMarkers() {
+async function fetchAndPlaceAllMarkers() {
     try {
-        const response = await fetch('/api/capitais_risco');
-        const capitais = await response.json();
-        if (!response.ok) throw new Error('Falha ao buscar capitais');
-
-        capitais.forEach(c => {
-            if (c.risco_nivel === 'ERRO') return;
-            const icon = L.divIcon({
-                className: `capital-marker-icon nivel-${c.risco_nivel}`,
-                html: `<b>${Math.round(c.maior_risco_valor || 0)}</b>`,
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
-            });
-            const marker = L.marker([c.lat, c.lon], { icon }).addTo(map)
-                .bindTooltip(`${c.capital} (${c.estado})`)
+        const response = await fetch('/api/todos_os_pontos');
+        if (!response.ok) throw new Error('Falha ao buscar todos os pontos do mapa.');
+        const todosOsPontos = await response.json();
+        todosOsPontos.forEach(ponto => {
+            if (ponto.lat === undefined || ponto.lon === undefined) return;
+            L.marker([ponto.lat, ponto.lon]).addTo(map)
+                .bindTooltip(`${ponto.nome} (${ponto.estado || ''})`.replace(' ()', ''))
                 .on('click', () => {
-                    map.setView([c.lat, c.lon], 11);
-                    processarNovoLocal(c.lat, c.lon, c.capital);
+                    // Salva a visualização do mapa ANTES de aplicar o zoom do clique
+                    lastMapView = { center: map.getCenter(), zoom: map.getZoom() };
+                    map.setView([ponto.lat, ponto.lon], 11);
+                    processarNovoLocal(ponto.lat, ponto.lon, ponto.nome);
                 });
         });
     } catch (error) {
-        console.error("Erro nos marcadores das capitais:", error);
+        console.error("Erro ao carregar os marcadores no mapa:", error);
     }
 }
 
-async function fetchAndPlaceRiscoMarkers() {
-    try {
-        const response = await fetch('/api/cidades_risco');
-        const cidadesDeRisco = await response.json();
-        cidadesDeRisco.forEach(cidade => {
-            const marker = L.marker([cidade.lat, cidade.lon]).addTo(map)
-                .bindTooltip(cidade.nome)
-                .on('click', () => {
-                    map.setView([cidade.lat, cidade.lon], 11);
-                    processarNovoLocal(cidade.lat, cidade.lon, cidade.nome);
-                });
-        });
-    } catch (error) {
-        console.error("Erro ao colocar marcadores de risco:", error);
-    }
+function ajustarLayoutMobile() {
+    const header = document.querySelector('.app-header');
+    if (!header) return;
+    const headerHeight = header.offsetHeight;
+    const containers = document.querySelectorAll('#map-container, #dashboard-container, #monitor-room-container');
+    containers.forEach(container => { container.style.top = `${headerHeight}px`; });
+    if (map) { setTimeout(() => map.invalidateSize(), 100); }
 }
 
+window.addEventListener('DOMContentLoaded', ajustarLayoutMobile);
+window.addEventListener('resize', ajustarLayoutMobile);
 
 // INICIALIZAÇÃO
 processarNovoLocal(INITIAL_LATITUDE, INITIAL_LONGITUDE, "Brasília");
-fetchAndPlaceCapitaisMarkers();
-fetchAndPlaceRiscoMarkers();
+fetchAndPlaceAllMarkers();
+
