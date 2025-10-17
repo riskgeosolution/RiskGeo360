@@ -12,6 +12,7 @@ import ssl
 from email.message import EmailMessage
 import threading  # Adicionado para tarefas em segundo plano
 import time  # Adicionado para a pausa entre e-mails
+import certifi  # Mantido no requirements.txt por boa prática
 
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -83,7 +84,7 @@ def get_sjc_weather_summary():
             "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
             "forecast_days": 3, "timezone": "auto"
         }
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
         resp_forecast.raise_for_status()
         hourly = resp_forecast.json().get('hourly', {})
 
@@ -98,7 +99,7 @@ def get_sjc_weather_summary():
         start_hist = end_hist - timedelta(days=3)
         params_hist = {"latitude": sjc_lat, "longitude": sjc_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                        "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
-        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, verify=False)
         resp_hist.raise_for_status()
         chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
 
@@ -140,6 +141,7 @@ def send_emails_in_background():
 
         try:
             context = ssl._create_unverified_context()
+
             with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
                 server.login(sender_email, sender_password)
 
@@ -210,11 +212,15 @@ def send_emails_in_background():
                     msg_resumo = EmailMessage()
                     msg_resumo.set_content("Por favor, ative o HTML para ver este e-mail.")
                     msg_resumo.add_alternative(corpo_html, subtype='html')
-                    msg_resumo['Subject'] = f'Resumo Climático para São José dos Campos - {agora.strftime("%d/%m")}'
+                    # --- MELHORIA: ASSUNTO DO E-MAIL MAIS ÚNICO ---
+                    msg_resumo['Subject'] = f'RiskGeo Resumo: SJC {agora.strftime("%d/%m %H:%M")}'
                     msg_resumo['From'] = sender_email
                     msg_resumo['To'] = recipient_email
                     server.send_message(msg_resumo)
                     print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso.")
+                else:
+                    print(f"[{datetime.now().isoformat()}] Resumo de SJC retornou vazio. E-mail não enviado.")
+
 
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS: {e}")
@@ -282,7 +288,7 @@ def get_capitais_risco():
         try:
             params_forecast = {"latitude": lat, "longitude": lon, "hourly": "precipitation", "forecast_days": 3,
                                "timezone": "auto"}
-            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
             resp_forecast.raise_for_status()
             dados_forecast = resp_forecast.json().get('hourly', {}).get('precipitation', [])
             chuva_futura = sum(p for p in dados_forecast[:72] if p is not None)
@@ -290,7 +296,7 @@ def get_capitais_risco():
             params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_date_hist.strftime('%Y-%m-%d'),
                                  "end_date": end_date_hist.strftime('%Y-%m-%d'), "hourly": "precipitation",
                                  "timezone": "auto"}
-            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist)
+            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist, verify=False)
             resp_chuva_hist.raise_for_status()
             dados_chuva_hist_hourly = resp_chuva_hist.json().get('hourly', {}).get('precipitation', [])
 
@@ -327,14 +333,14 @@ def get_weather_data():
         start_hist = end_hist - timedelta(days=3)
         params_hist = {"latitude": lat, "longitude": lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                        "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
-        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, verify=False)
         resp_hist.raise_for_status()
         chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
 
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,windgusts_10m,surface_pressure,weather_code,precipitation,relative_humidity_2m,dewpoint_2m",
                            "forecast_days": 3, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
         resp_forecast.raise_for_status()
         hourly = resp_forecast.json().get('hourly', {})
 
@@ -366,7 +372,7 @@ def get_historical_pluvio_data():
     params = {"latitude": lat, "longitude": lon, "start_date": start_time_utc.strftime('%Y-%m-%d'),
               "end_date": end_time_utc.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
     try:
-        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params)
+        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params, verify=False)
         resp.raise_for_status()
         data = resp.json()
         precip = data.get('hourly', {}).get('precipitation', [])[-periodo_horas:]
@@ -387,7 +393,7 @@ def get_forecast_chart_data():
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,precipitation_probability,precipitation,dewpoint_2m,relative_humidity_2m,windspeed_10m,windgusts_10m,surface_pressure,weather_code",
                            "forecast_days": 7, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
         resp_forecast.raise_for_status()
         dados_forecast = resp_forecast.json()
         dados_forecast['cidade_nome'] = nome_cidade_frontend
