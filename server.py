@@ -84,6 +84,7 @@ def get_sjc_weather_summary():
             "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
             "forecast_days": 3, "timezone": "auto"
         }
+        # Adicionado verify=False para contornar o erro de SSL na busca de dados
         resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
         resp_forecast.raise_for_status()
         hourly = resp_forecast.json().get('hourly', {})
@@ -99,6 +100,7 @@ def get_sjc_weather_summary():
         start_hist = end_hist - timedelta(days=3)
         params_hist = {"latitude": sjc_lat, "longitude": sjc_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                        "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
+        # Adicionado verify=False para contornar o erro de SSL na busca de dados
         resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, verify=False)
         resp_hist.raise_for_status()
         chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
@@ -140,24 +142,24 @@ def send_emails_in_background():
         agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
 
         try:
+            # --- SOLUÇÃO PRAGMÁTICA QUE FUNCIONOU LOCALMENTE E DEVE FUNCIONAR NO RENDER ---
             context = ssl._create_unverified_context()
 
             with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
                 server.login(sender_email, sender_password)
 
-                # --- 1. ENVIAR E-MAIL DE NOTIFICAÇÃO DE ACESSO (AGORA EM HTML) ---
+                # --- 1. ENVIAR E-MAIL DE NOTIFICAÇÃO DE ACESSO ---
                 corpo_acesso_html = f"""
                 <html>
                     <body>
                         <p>Olá,</p>
                         <p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p>
                         <p><b>Data e Hora:</b> {agora_formatado}</p>
-                        <p>Este é um e-mail automático de notificação.</p>
                     </body>
                 </html>
                 """
                 msg_acesso = EmailMessage()
-                msg_acesso.set_content("Novo acesso à plataforma RiskGeo 360.")  # Fallback para texto simples
+                msg_acesso.set_content("Novo acesso à plataforma RiskGeo 360.")
                 msg_acesso.add_alternative(corpo_acesso_html, subtype='html')
                 msg_acesso['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
                 msg_acesso['From'] = sender_email
@@ -165,10 +167,9 @@ def send_emails_in_background():
                 server.send_message(msg_acesso)
                 print(f"[{datetime.now().isoformat()}] E-mail de ACESSO enviado com sucesso.")
 
-                # --- PAUSA DE SEGURANÇA ---
                 time.sleep(2)
 
-                # --- 2. BUSCAR DADOS E ENVIAR E-MAIL DE RESUMO DE SJC ---
+                # --- 2. ENVIAR E-MAIL DE RESUMO DE SJC ---
                 resumo_sjc = get_sjc_weather_summary()
                 if resumo_sjc:
                     temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get(
@@ -187,7 +188,6 @@ def send_emails_in_background():
                     risco = resumo_sjc.get('risco_nivel', {})
                     risco_nivel = risco.get('nivel', 'INDETERMINADO')
                     risco_cor = risco.get('cor', '#999999')
-                    # Define a cor do texto para o nível de risco para garantir a legibilidade
                     cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
 
                     corpo_html = f"""
@@ -205,22 +205,17 @@ def send_emails_in_background():
                                 <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
                                 <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
                             </ul>
-                            <p>Atenciosamente,<br>Sistema de Notificação RiskGeo</p>
                         </body>
                     </html>
                     """
                     msg_resumo = EmailMessage()
                     msg_resumo.set_content("Por favor, ative o HTML para ver este e-mail.")
                     msg_resumo.add_alternative(corpo_html, subtype='html')
-                    # --- MELHORIA: ASSUNTO DO E-MAIL MAIS ÚNICO ---
                     msg_resumo['Subject'] = f'RiskGeo Resumo: SJC {agora.strftime("%d/%m %H:%M")}'
                     msg_resumo['From'] = sender_email
                     msg_resumo['To'] = recipient_email
                     server.send_message(msg_resumo)
                     print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso.")
-                else:
-                    print(f"[{datetime.now().isoformat()}] Resumo de SJC retornou vazio. E-mail não enviado.")
-
 
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS: {e}")
@@ -238,10 +233,8 @@ def serve_map_page():
 
 @app.route('/api/notify_access', methods=['POST'])
 def notify_access():
-    # Inicia a função de envio de e-mails em uma nova thread
     email_thread = threading.Thread(target=send_emails_in_background)
     email_thread.start()
-    # Retorna uma resposta imediata para não bloquear o utilizador
     return jsonify({"status": "processamento iniciado"}), 202
 
 
