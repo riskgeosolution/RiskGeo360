@@ -117,13 +117,12 @@ def get_sjc_weather_summary():
         return None
 
 
-# --- NOVA FUNÇÃO DE ENVIO DE E-MAIL VIA API HTTP ---
+# --- FUNÇÃO DE ENVIO DE E-MAIL VIA API HTTP (POR ACESSO) ---
 def send_emails_in_background():
     """
-    Envia e-mails usando a API HTTP do SMTP2GO, evitando problemas de SSL.
+    Envia e-mails de acesso e resumo de SJC usando a API HTTP do SMTP2GO.
     """
     with app.app_context():
-        # --- CONFIGURAÇÕES DA API ---
         api_key = os.environ.get('SMTP2GO_API_KEY')
         sender_email = os.environ.get('SENDER_EMAIL')
         recipient_email = os.environ.get('NOTIFICATION_EMAIL')
@@ -141,14 +140,10 @@ def send_emails_in_background():
             html_content_acesso = f"<html><body><p>Olá,</p><p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p><p><b>Data e Hora:</b> {agora_formatado}</p></body></html>"
 
             payload_acesso = {
-                "api_key": api_key,
-                "to": [recipient_email],
-                "sender": sender_email,
-                "subject": "Aviso: Acesso à Plataforma RiskGeo 360",
-                "html_body": html_content_acesso,
+                "api_key": api_key, "to": [recipient_email], "sender": sender_email,
+                "subject": "Aviso: Acesso à Plataforma RiskGeo 360", "html_body": html_content_acesso,
                 "text_body": f"Novo acesso à plataforma RiskGeo 360 em {agora_formatado}."
             }
-
             response_acesso = requests.post(api_url, json=payload_acesso)
             if response_acesso.status_code == 200:
                 print(f"[{datetime.now().isoformat()}] E-mail de ACESSO enviado com sucesso via API.")
@@ -158,51 +153,28 @@ def send_emails_in_background():
 
             time.sleep(2)
 
-            # 2. E-mail de Resumo
+            # 2. E-mail de Resumo de SJC (acionado no acesso)
             resumo_sjc = get_sjc_weather_summary()
             if resumo_sjc:
+                # (O restante do código para o resumo de SJC permanece o mesmo)
                 risco = resumo_sjc.get('risco_nivel', {})
                 temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get('temperatura') is not None else "N/D"
                 sensacao = f"{resumo_sjc.get('sensacao_termica'):.1f}°C" if resumo_sjc.get(
                     'sensacao_termica') is not None else "N/D"
-                humidade = f"{resumo_sjc.get('umidade_relativa')}%" if resumo_sjc.get(
-                    'umidade_relativa') is not None else "N/D"
-                vento = f"{resumo_sjc.get('velocidade_vento'):.1f} km/h" if resumo_sjc.get(
-                    'velocidade_vento') is not None else "N/D"
-                chuva_fut = f"{resumo_sjc.get('chuva_72h_fut'):.1f} mm" if resumo_sjc.get(
-                    'chuva_72h_fut') is not None else "N/D"
-                chuva_hist = f"{resumo_sjc.get('chuva_72h_hist'):.1f} mm" if resumo_sjc.get(
-                    'chuva_72h_hist') is not None else "N/D"
-                risco_nivel = risco.get('nivel', 'INDETERMINADO')
-                risco_cor = risco.get('cor', '#999999')
-                cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
-
+                # ... (outras variáveis)
                 html_content_resumo = f"""
                 <html><body style="font-family: Arial, sans-serif;">
                     <p>Olá,</p>
                     <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
-                    <ul style="list-style-type: none; padding-left: 0;">
-                        <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
-                        <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
-                        <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
-                        <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
-                        <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
-                        <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
-                        <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
-                        <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
-                    </ul>
+                    {_build_html_summary_list(resumo_sjc)}
                 </body></html>
                 """
-
                 payload_resumo = {
-                    "api_key": api_key,
-                    "to": [recipient_email],
-                    "sender": sender_email,
+                    "api_key": api_key, "to": [recipient_email], "sender": sender_email,
                     "subject": f'RiskGeo Resumo: SJC {agora.strftime("%d/%m %H:%M")}',
                     "html_body": html_content_resumo,
                     "text_body": "Resumo do tempo para São José dos Campos. Ative o HTML para ver."
                 }
-
                 response_resumo = requests.post(api_url, json=payload_resumo)
                 if response_resumo.status_code == 200:
                     print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso via API.")
@@ -216,11 +188,139 @@ def send_emails_in_background():
             print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS VIA API: {e}")
 
 
+# --- NOVAS FUNÇÕES PARA O E-MAIL AGENDADO DE CARAGUATATUBA ---
+
+def get_caragua_weather_summary():
+    """Busca dados climáticos para Caraguatatuba."""
+    caragua_lat, caragua_lon = -23.621, -45.413
+    try:
+        # Lógica idêntica a get_sjc_weather_summary, apenas com lat/lon diferentes
+        params_forecast = {"latitude": caragua_lat, "longitude": caragua_lon,
+                           "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
+                           "forecast_days": 3, "timezone": "auto"}
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast.raise_for_status()
+        hourly = resp_forecast.json().get('hourly', {})
+
+        def get_val(key):
+            values = hourly.get(key)
+            return values[0] if values and len(values) > 0 else None
+
+        chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
+        end_hist, start_hist = datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc) - timedelta(
+            days=4)
+        params_hist = {"latitude": caragua_lat, "longitude": caragua_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
+                       "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist.raise_for_status()
+        chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
+        maior_risco = max(chuva_hist, chuva_fut)
+        nivel_risco = determinar_nivel(maior_risco)
+        return {"temperatura": get_val('temperature_2m'), "sensacao_termica": get_val('apparent_temperature'),
+                "descricao_tempo": converter_codigo_tempo(get_val('weather_code')), "chuva_72h_fut": chuva_fut,
+                "velocidade_vento": get_val('windspeed_10m'), "umidade_relativa": get_val('relative_humidity_2m'),
+                "chuva_72h_hist": chuva_hist, "risco_nivel": nivel_risco}
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de Caraguatatuba: {e}")
+        return None
+
+
+def _build_html_summary_list(summary_data):
+    """Função auxiliar para construir a lista HTML do corpo do e-mail."""
+    if not summary_data: return ""
+    risco = summary_data.get('risco_nivel', {})
+    temp = f"{summary_data.get('temperatura'):.1f}°C" if summary_data.get('temperatura') is not None else "N/D"
+    sensacao = f"{summary_data.get('sensacao_termica'):.1f}°C" if summary_data.get(
+        'sensacao_termica') is not None else "N/D"
+    humidade = f"{summary_data.get('umidade_relativa')}%" if summary_data.get('umidade_relativa') is not None else "N/D"
+    vento = f"{summary_data.get('velocidade_vento'):.1f} km/h" if summary_data.get(
+        'velocidade_vento') is not None else "N/D"
+    chuva_fut = f"{summary_data.get('chuva_72h_fut'):.1f} mm" if summary_data.get(
+        'chuva_72h_fut') is not None else "N/D"
+    chuva_hist = f"{summary_data.get('chuva_72h_hist'):.1f} mm" if summary_data.get(
+        'chuva_72h_hist') is not None else "N/D"
+    risco_nivel = risco.get('nivel', 'INDETERMINADO')
+    risco_cor = risco.get('cor', '#999999')
+    cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
+
+    return f"""
+    <ul style="list-style-type: none; padding-left: 0;">
+        <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
+        <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {summary_data.get('descricao_tempo', 'N/D')}</li>
+        <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
+        <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
+        <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
+        <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
+        <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
+        <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
+    </ul>
+    """
+
+
+def send_daily_caragua_summary():
+    """Envia o e-mail de resumo diário para Caraguatatuba."""
+    with app.app_context():
+        print(f"[{datetime.now().isoformat()}] Executando tarefa agendada: Resumo de Caraguatatuba.")
+        api_key = os.environ.get('SMTP2GO_API_KEY')
+        sender_email = os.environ.get('SENDER_EMAIL')
+        recipient_email = os.environ.get('NOTIFICATION_EMAIL')
+        api_url = "https://api.smtp2go.com/v3/email/send"
+        if not all([api_key, sender_email, recipient_email]):
+            print(f"[{datetime.now().isoformat()}] ERRO (Agendado): Configuração da API ou e-mails faltando.")
+            return
+
+        resumo_caragua = get_caragua_weather_summary()
+        if resumo_caragua:
+            agora = datetime.now()
+            html_content = f"""
+            <html><body style="font-family: Arial, sans-serif;">
+                <p>Olá,</p>
+                <p>Segue o resumo diário das condições climáticas para <b>Caraguatatuba</b>:</p>
+                {_build_html_summary_list(resumo_caragua)}
+            </body></html>
+            """
+            payload = {
+                "api_key": api_key, "to": [recipient_email], "sender": sender_email,
+                "subject": f'RiskGeo Resumo Diário: Caraguatatuba {agora.strftime("%d/%m/%Y")}',
+                "html_body": html_content, "text_body": "Resumo diário do tempo para Caraguatatuba."
+            }
+            response = requests.post(api_url, json=payload)
+            if response.status_code == 200:
+                print(f"[{datetime.now().isoformat()}] E-mail AGENDADO de Caraguatatuba enviado com sucesso.")
+            else:
+                print(
+                    f"[{datetime.now().isoformat()}] FALHA (Agendado) ao enviar e-mail de Caraguatatuba: {response.text}")
+
+
+def run_scheduler():
+    """Verifica a cada minuto se é hora de enviar o e-mail agendado."""
+    # --- Altere a hora e o minuto aqui ---
+    scheduled_hour = 15  # Formato 24h (0-23)
+    scheduled_minute = 45  # Minuto (0-59)
+    # ------------------------------------
+
+    last_sent_date = None
+    print(
+        f"[*] Agendador iniciado. E-mail de Caraguatatuba será enviado diariamente às {scheduled_hour:02d}:{scheduled_minute:02d}.")
+
+    while True:
+        now = datetime.now()
+        # Evita enviar múltiplas vezes no mesmo dia
+        if now.date() != last_sent_date:
+            if now.hour == scheduled_hour and now.minute == scheduled_minute:
+                send_daily_caragua_summary()
+                last_sent_date = now.date()  # Marca que o e-mail de hoje foi enviado
+
+        time.sleep(60)  # Espera 60 segundos antes de verificar novamente
+
+
 # --- ROTAS DA APLICAÇÃO ---
 @app.route('/')
 def serve_welcome():
     return send_from_directory('web', 'welcome.html')
 
+
+# (O resto das rotas permanece o mesmo)
 
 @app.route('/index.html')
 def serve_map_page():
@@ -366,5 +466,12 @@ def get_forecast_chart_data():
 
 
 if __name__ == '__main__':
+    # Inicia o agendador em uma thread separada para não bloquear a aplicação
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
+
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Desativar o reloader do modo debug para evitar que o agendador execute duas vezes
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+
+
