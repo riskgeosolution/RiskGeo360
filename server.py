@@ -12,7 +12,7 @@ import ssl
 from email.message import EmailMessage
 import threading  # Adicionado para tarefas em segundo plano
 import time  # Adicionado para a pausa entre e-mails
-import certifi  # Mantido no requirements.txt por boa prática
+import certifi  # Importante para a conexão segura
 
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -126,10 +126,9 @@ def get_sjc_weather_summary():
 
 def send_emails_in_background():
     """Função executada em uma thread para enviar os e-mails sem bloquear a aplicação."""
-    with app.app_context():  # Garante acesso ao contexto da aplicação na thread
-        # --- BUSCAR CREDENCIAIS ---
+    with app.app_context():
         smtp_host = os.environ.get('ZOHO_SMTP_HOST')
-        smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 465))
+        smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 587))
         sender_email = os.environ.get('ZOHO_EMAIL_USER')
         sender_password = os.environ.get('ZOHO_EMAIL_PASS')
         recipient_email = os.environ.get('NOTIFICATION_EMAIL')
@@ -142,24 +141,23 @@ def send_emails_in_background():
         agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
 
         try:
-            # --- SOLUÇÃO PRAGMÁTICA QUE FUNCIONOU LOCALMENTE E DEVE FUNCIONAR NO RENDER ---
-            context = ssl._create_unverified_context()
+            # --- SOLUÇÃO PADRÃO DA INDÚSTRIA (STARTTLS) ---
+            context = ssl.create_default_context(cafile=certifi.where())
 
-            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.starttls(context=context)
                 server.login(sender_email, sender_password)
 
                 # --- 1. ENVIAR E-MAIL DE NOTIFICAÇÃO DE ACESSO ---
                 corpo_acesso_html = f"""
-                <html>
-                    <body>
-                        <p>Olá,</p>
-                        <p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p>
-                        <p><b>Data e Hora:</b> {agora_formatado}</p>
-                    </body>
-                </html>
+                <html><body>
+                    <p>Olá,</p>
+                    <p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p>
+                    <p><b>Data e Hora:</b> {agora_formatado}</p>
+                </body></html>
                 """
                 msg_acesso = EmailMessage()
-                msg_acesso.set_content("Novo acesso à plataforma RiskGeo 360.")
+                msg_acesso.set_content(f"Novo acesso à plataforma RiskGeo 360 em {agora_formatado}.")
                 msg_acesso.add_alternative(corpo_acesso_html, subtype='html')
                 msg_acesso['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
                 msg_acesso['From'] = sender_email
@@ -191,22 +189,20 @@ def send_emails_in_background():
                     cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
 
                     corpo_html = f"""
-                    <html>
-                        <body style="font-family: Arial, sans-serif;">
-                            <p>Olá,</p>
-                            <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
-                            <ul style="list-style-type: none; padding-left: 0;">
-                                <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
-                                <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
-                                <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
-                                <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
-                                <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
-                                <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
-                                <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
-                                <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
-                            </ul>
-                        </body>
-                    </html>
+                    <html><body style="font-family: Arial, sans-serif;">
+                        <p>Olá,</p>
+                        <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
+                        <ul style="list-style-type: none; padding-left: 0;">
+                            <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
+                            <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
+                            <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
+                            <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
+                            <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
+                            <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
+                            <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
+                            <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
+                        </ul>
+                    </body></html>
                     """
                     msg_resumo = EmailMessage()
                     msg_resumo.set_content("Por favor, ative o HTML para ver este e-mail.")
