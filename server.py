@@ -6,12 +6,6 @@ from datetime import datetime, timedelta, timezone
 import calendar
 from dateutil.relativedelta import relativedelta
 
-# --- BIBLIOTECAS ADICIONADAS PARA E-MAIL ---
-import smtplib
-import ssl
-from email.message import EmailMessage
-import certifi
-
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPENMETEO_HISTORICAL_URL = "https://archive-api.open-meteo.com/v1/era5"
@@ -79,45 +73,6 @@ def serve_map_page():
     return send_from_directory('web', 'index.html')
 
 
-# --- NOVA ROTA PARA NOTIFICAR ACESSO POR E-MAIL ---
-@app.route('/api/notify_access', methods=['POST'])
-def notify_access():
-    # --- BUSCAR CREDENCIAIS DAS VARIÁVEIS DE AMBIENTE ---
-    smtp_host = os.environ.get('ZOHO_SMTP_HOST')
-    smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 465))
-    sender_email = os.environ.get('ZOHO_EMAIL_USER')
-    sender_password = os.environ.get('ZOHO_EMAIL_PASS')
-    recipient_email = os.environ.get('NOTIFICATION_EMAIL')
-
-    # --- VALIDAÇÃO ---
-    if not all([smtp_host, sender_email, sender_password, recipient_email]):
-        print(f"[{datetime.now().isoformat()}] ERRO: Credenciais de e-mail não configuradas corretamente nas variáveis de ambiente.")
-        return jsonify({"error": "Configuração de e-mail incompleta no servidor."}), 500
-
-    # --- CRIAR E-MAIL ---
-    agora = datetime.now(timezone.utc) - timedelta(hours=3) # Fuso de Brasília
-    agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
-
-    msg = EmailMessage()
-    msg.set_content(f"Olá,\n\nUm novo acesso à plataforma RiskGeo 360 foi registrado em {agora_formatado}.\n\nAtenciosamente,\nSistema de Notificação RiskGeo")
-    msg['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
-    msg['From'] = sender_email
-    msg['To'] = recipient_email
-
-    # --- ENVIAR E-MAIL ---
-    try:
-        # --- VERSÃO SEGURA PARA PRODUÇÃO (RENDER) ---
-        context = ssl.create_default_context(cafile=certifi.where())
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
-            server.login(sender_email, sender_password)
-            server.send_message(msg)
-            print(f"[{datetime.now().isoformat()}] E-mail de notificação enviado com sucesso para {recipient_email}")
-            return jsonify({"success": "E-mail enviado."}), 200
-    except Exception as e:
-        print(f"[{datetime.now().isoformat()}] FALHA AO ENVIAR E-MAIL: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
 def converter_codigo_tempo(code):
     codes = {
         0: "Céu Limpo", 1: "Céu Parcialmente Nublado", 2: "Céu Nublado", 3: "Céu Encoberto",
@@ -173,7 +128,7 @@ def get_capitais_risco():
 
             chuva_historica_completa = [p for p in dados_chuva_hist_hourly if p is not None][-72:]
             chuva_72h = sum(chuva_historica_completa)
-            chuva_24h = sum(chuha_historica_completa[-24:])
+            chuva_24h = sum(chuva_historica_completa[-24:])
 
             maior_risco = max(chuva_72h, chuva_futura)
             nivel_risco = determinar_nivel(maior_risco)

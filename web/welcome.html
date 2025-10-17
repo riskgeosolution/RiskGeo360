@@ -69,39 +69,5 @@
         </div>
     </div>
 
-    <!-- SCRIPT ADICIONADO PARA ENVIO DE E-MAIL -->
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const enterButton = document.querySelector('.enter-btn');
-
-            if (enterButton) {
-                enterButton.addEventListener('click', async (event) => {
-                    // 1. Previne a navegação imediata para dar tempo ao script de rodar
-                    event.preventDefault();
-
-                    const targetUrl = enterButton.href;
-
-                    // 2. Tenta notificar o backend (sem bloquear o usuário)
-                    try {
-                        await fetch('/api/notify_access', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            }
-                        });
-                        // Não é necessário esperar a resposta ou verificar o sucesso,
-                        // a navegação deve acontecer de qualquer forma.
-                    } catch (error) {
-                        console.error('Falha ao tentar notificar o acesso:', error);
-                    } finally {
-                        // 3. Redireciona o usuário para a página principal
-                        window.location.href = targetUrl;
-                    }
-                });
-            }
-        });
-    </script>
-
 </body>
 </html>
-
