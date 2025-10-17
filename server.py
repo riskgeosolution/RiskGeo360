@@ -3,16 +3,8 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from datetime import datetime, timedelta, timezone
-import calendar
-from dateutil.relativedelta import relativedelta
-
-# --- BIBLIOTECAS ADICIONADAS PARA E-MAIL E THREADING ---
-import smtplib
-import ssl
-from email.message import EmailMessage
-import threading  # Adicionado para tarefas em segundo plano
-import time  # Adicionado para a pausa entre e-mails
-import certifi  # Importante para a conexão segura
+import threading
+import time
 
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -71,169 +63,6 @@ app = Flask(__name__, static_folder='web', static_url_path='')
 CORS(app)
 
 
-# --- FUNÇÕES DE E-MAIL (AGORA EM SEGUNDO PLANO) ---
-
-def get_sjc_weather_summary():
-    """Busca e retorna um dicionário com o resumo do tempo para SJC."""
-    sjc_lat = -23.1794
-    sjc_lon = -45.8872
-    try:
-        # 1. Buscar dados de previsão (futuro)
-        params_forecast = {
-            "latitude": sjc_lat, "longitude": sjc_lon,
-            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
-            "forecast_days": 3, "timezone": "auto"
-        }
-        # Adicionado verify=False para contornar o erro de SSL na busca de dados
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
-        resp_forecast.raise_for_status()
-        hourly = resp_forecast.json().get('hourly', {})
-
-        def get_val(key):
-            values = hourly.get(key)
-            return values[0] if values and len(values) > 0 else None
-
-        chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
-
-        # 2. Buscar dados de chuva histórica (passado)
-        end_hist = datetime.now(timezone.utc) - timedelta(days=1)
-        start_hist = end_hist - timedelta(days=3)
-        params_hist = {"latitude": sjc_lat, "longitude": sjc_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
-                       "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
-        # Adicionado verify=False para contornar o erro de SSL na busca de dados
-        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, verify=False)
-        resp_hist.raise_for_status()
-        chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
-
-        # 3. Calcular o risco
-        maior_risco = max(chuva_hist, chuva_fut)
-        nivel_risco = determinar_nivel(maior_risco)
-
-        return {
-            "temperatura": get_val('temperature_2m'),
-            "sensacao_termica": get_val('apparent_temperature'),
-            "descricao_tempo": converter_codigo_tempo(get_val('weather_code')),
-            "chuva_72h_fut": chuva_fut,
-            "velocidade_vento": get_val('windspeed_10m'),
-            "umidade_relativa": get_val('relative_humidity_2m'),
-            "chuva_72h_hist": chuva_hist,
-            "risco_nivel": nivel_risco
-        }
-    except Exception as e:
-        print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de SJC: {e}")
-        return None
-
-
-def send_emails_in_background():
-    """Função executada em uma thread para enviar os e-mails sem bloquear a aplicação."""
-    with app.app_context():
-        smtp_host = os.environ.get('ZOHO_SMTP_HOST')
-        smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 587))
-        sender_email = os.environ.get('ZOHO_EMAIL_USER')
-        sender_password = os.environ.get('ZOHO_EMAIL_PASS')
-        recipient_email = os.environ.get('NOTIFICATION_EMAIL')
-
-        if not all([smtp_host, sender_email, sender_password, recipient_email]):
-            print(f"[{datetime.now().isoformat()}] ERRO: Credenciais de e-mail não configuradas.")
-            return
-
-        agora = datetime.now(timezone.utc) - timedelta(hours=3)
-        agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
-
-        try:
-            # --- SOLUÇÃO PADRÃO DA INDÚSTRIA (STARTTLS) ---
-            context = ssl.create_default_context(cafile=certifi.where())
-
-            with smtplib.SMTP(smtp_host, smtp_port) as server:
-                server.starttls(context=context)
-                server.login(sender_email, sender_password)
-
-                # --- 1. ENVIAR E-MAIL DE NOTIFICAÇÃO DE ACESSO ---
-                corpo_acesso_html = f"""
-                <html><body>
-                    <p>Olá,</p>
-                    <p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p>
-                    <p><b>Data e Hora:</b> {agora_formatado}</p>
-                </body></html>
-                """
-                msg_acesso = EmailMessage()
-                msg_acesso.set_content(f"Novo acesso à plataforma RiskGeo 360 em {agora_formatado}.")
-                msg_acesso.add_alternative(corpo_acesso_html, subtype='html')
-                msg_acesso['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
-                msg_acesso['From'] = sender_email
-                msg_acesso['To'] = recipient_email
-                server.send_message(msg_acesso)
-                print(f"[{datetime.now().isoformat()}] E-mail de ACESSO enviado com sucesso.")
-
-                time.sleep(2)
-
-                # --- 2. ENVIAR E-MAIL DE RESUMO DE SJC ---
-                resumo_sjc = get_sjc_weather_summary()
-                if resumo_sjc:
-                    temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get(
-                        'temperatura') is not None else "N/D"
-                    sensacao = f"{resumo_sjc.get('sensacao_termica'):.1f}°C" if resumo_sjc.get(
-                        'sensacao_termica') is not None else "N/D"
-                    humidade = f"{resumo_sjc.get('umidade_relativa')}%" if resumo_sjc.get(
-                        'umidade_relativa') is not None else "N/D"
-                    vento = f"{resumo_sjc.get('velocidade_vento'):.1f} km/h" if resumo_sjc.get(
-                        'velocidade_vento') is not None else "N/D"
-                    chuva_fut = f"{resumo_sjc.get('chuva_72h_fut'):.1f} mm" if resumo_sjc.get(
-                        'chuva_72h_fut') is not None else "N/D"
-                    chuva_hist = f"{resumo_sjc.get('chuva_72h_hist'):.1f} mm" if resumo_sjc.get(
-                        'chuva_72h_hist') is not None else "N/D"
-
-                    risco = resumo_sjc.get('risco_nivel', {})
-                    risco_nivel = risco.get('nivel', 'INDETERMINADO')
-                    risco_cor = risco.get('cor', '#999999')
-                    cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
-
-                    corpo_html = f"""
-                    <html><body style="font-family: Arial, sans-serif;">
-                        <p>Olá,</p>
-                        <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
-                        <ul style="list-style-type: none; padding-left: 0;">
-                            <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
-                            <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
-                            <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
-                            <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
-                            <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
-                            <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
-                            <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
-                            <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
-                        </ul>
-                    </body></html>
-                    """
-                    msg_resumo = EmailMessage()
-                    msg_resumo.set_content("Por favor, ative o HTML para ver este e-mail.")
-                    msg_resumo.add_alternative(corpo_html, subtype='html')
-                    msg_resumo['Subject'] = f'RiskGeo Resumo: SJC {agora.strftime("%d/%m %H:%M")}'
-                    msg_resumo['From'] = sender_email
-                    msg_resumo['To'] = recipient_email
-                    server.send_message(msg_resumo)
-                    print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso.")
-
-        except Exception as e:
-            print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS: {e}")
-
-
-@app.route('/')
-def serve_welcome():
-    return send_from_directory('web', 'welcome.html')
-
-
-@app.route('/index.html')
-def serve_map_page():
-    return send_from_directory('web', 'index.html')
-
-
-@app.route('/api/notify_access', methods=['POST'])
-def notify_access():
-    email_thread = threading.Thread(target=send_emails_in_background)
-    email_thread.start()
-    return jsonify({"status": "processamento iniciado"}), 202
-
-
 def converter_codigo_tempo(code):
     codes = {
         0: "Céu Limpo", 1: "Céu Parcialmente Nublado", 2: "Céu Nublado", 3: "Céu Encoberto",
@@ -250,6 +79,158 @@ def determinar_nivel(valor):
     if valor >= 20: return {"nivel": "LARANJA", "cor": "#FFA500"}
     if valor >= 10: return {"nivel": "AMARELO", "cor": "#FFFF00"}
     return {"nivel": "VERDE", "cor": "#008000"}
+
+
+def get_sjc_weather_summary():
+    sjc_lat, sjc_lon = -23.1794, -45.8872
+    try:
+        params_forecast = {"latitude": sjc_lat, "longitude": sjc_lon,
+                           "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
+                           "forecast_days": 3, "timezone": "auto"}
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast.raise_for_status()
+        hourly = resp_forecast.json().get('hourly', {})
+
+        def get_val(key):
+            values = hourly.get(key)
+            return values[0] if values and len(values) > 0 else None
+
+        chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
+
+        end_hist, start_hist = datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc) - timedelta(
+            days=4)
+        params_hist = {"latitude": sjc_lat, "longitude": sjc_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
+                       "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist.raise_for_status()
+        chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
+
+        maior_risco = max(chuva_hist, chuva_fut)
+        nivel_risco = determinar_nivel(maior_risco)
+
+        return {"temperatura": get_val('temperature_2m'), "sensacao_termica": get_val('apparent_temperature'),
+                "descricao_tempo": converter_codigo_tempo(get_val('weather_code')), "chuva_72h_fut": chuva_fut,
+                "velocidade_vento": get_val('windspeed_10m'), "umidade_relativa": get_val('relative_humidity_2m'),
+                "chuva_72h_hist": chuva_hist, "risco_nivel": nivel_risco}
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de SJC: {e}")
+        return None
+
+
+# --- NOVA FUNÇÃO DE ENVIO DE E-MAIL VIA API HTTP ---
+def send_emails_in_background():
+    """
+    Envia e-mails usando a API HTTP do SMTP2GO, evitando problemas de SSL.
+    """
+    with app.app_context():
+        # --- CONFIGURAÇÕES DA API ---
+        api_key = os.environ.get('SMTP2GO_API_KEY')
+        sender_email = os.environ.get('SENDER_EMAIL')
+        recipient_email = os.environ.get('NOTIFICATION_EMAIL')
+        api_url = "https://api.smtp2go.com/v3/email/send"
+
+        if not all([api_key, sender_email, recipient_email]):
+            print(f"[{datetime.now().isoformat()}] ERRO: Configuração da API do SMTP2GO ou e-mails faltando.")
+            return
+
+        agora = datetime.now(timezone.utc) - timedelta(hours=3)
+        agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
+
+        try:
+            # 1. E-mail de Acesso
+            html_content_acesso = f"<html><body><p>Olá,</p><p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p><p><b>Data e Hora:</b> {agora_formatado}</p></body></html>"
+
+            payload_acesso = {
+                "api_key": api_key,
+                "to": [recipient_email],
+                "sender": sender_email,
+                "subject": "Aviso: Acesso à Plataforma RiskGeo 360",
+                "html_body": html_content_acesso,
+                "text_body": f"Novo acesso à plataforma RiskGeo 360 em {agora_formatado}."
+            }
+
+            response_acesso = requests.post(api_url, json=payload_acesso)
+            if response_acesso.status_code == 200:
+                print(f"[{datetime.now().isoformat()}] E-mail de ACESSO enviado com sucesso via API.")
+            else:
+                print(
+                    f"[{datetime.now().isoformat()}] FALHA ao enviar e-mail de ACESSO via API: {response_acesso.text}")
+
+            time.sleep(2)
+
+            # 2. E-mail de Resumo
+            resumo_sjc = get_sjc_weather_summary()
+            if resumo_sjc:
+                risco = resumo_sjc.get('risco_nivel', {})
+                temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get('temperatura') is not None else "N/D"
+                sensacao = f"{resumo_sjc.get('sensacao_termica'):.1f}°C" if resumo_sjc.get(
+                    'sensacao_termica') is not None else "N/D"
+                humidade = f"{resumo_sjc.get('umidade_relativa')}%" if resumo_sjc.get(
+                    'umidade_relativa') is not None else "N/D"
+                vento = f"{resumo_sjc.get('velocidade_vento'):.1f} km/h" if resumo_sjc.get(
+                    'velocidade_vento') is not None else "N/D"
+                chuva_fut = f"{resumo_sjc.get('chuva_72h_fut'):.1f} mm" if resumo_sjc.get(
+                    'chuva_72h_fut') is not None else "N/D"
+                chuva_hist = f"{resumo_sjc.get('chuva_72h_hist'):.1f} mm" if resumo_sjc.get(
+                    'chuva_72h_hist') is not None else "N/D"
+                risco_nivel = risco.get('nivel', 'INDETERMINADO')
+                risco_cor = risco.get('cor', '#999999')
+                cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
+
+                html_content_resumo = f"""
+                <html><body style="font-family: Arial, sans-serif;">
+                    <p>Olá,</p>
+                    <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
+                    <ul style="list-style-type: none; padding-left: 0;">
+                        <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
+                        <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
+                        <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
+                        <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
+                        <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
+                        <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
+                        <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
+                        <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
+                    </ul>
+                </body></html>
+                """
+
+                payload_resumo = {
+                    "api_key": api_key,
+                    "to": [recipient_email],
+                    "sender": sender_email,
+                    "subject": f'RiskGeo Resumo: SJC {agora.strftime("%d/%m %H:%M")}',
+                    "html_body": html_content_resumo,
+                    "text_body": "Resumo do tempo para São José dos Campos. Ative o HTML para ver."
+                }
+
+                response_resumo = requests.post(api_url, json=payload_resumo)
+                if response_resumo.status_code == 200:
+                    print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso via API.")
+                else:
+                    print(
+                        f"[{datetime.now().isoformat()}] FALHA ao enviar e-mail de RESUMO via API: {response_resumo.text}")
+
+        except requests.exceptions.RequestException as e:
+            print(f"[{datetime.now().isoformat()}] FALHA DE CONEXÃO AO ENVIAR E-MAILS VIA API: {e}")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS VIA API: {e}")
+
+
+# --- ROTAS DA APLICAÇÃO ---
+@app.route('/')
+def serve_welcome():
+    return send_from_directory('web', 'welcome.html')
+
+
+@app.route('/index.html')
+def serve_map_page():
+    return send_from_directory('web', 'index.html')
+
+
+@app.route('/api/notify_access', methods=['POST'])
+def notify_access():
+    threading.Thread(target=send_emails_in_background).start()
+    return jsonify({"status": "processamento iniciado"}), 202
 
 
 @app.route('/api/todos_os_pontos', methods=['GET'])
@@ -277,7 +258,7 @@ def get_capitais_risco():
         try:
             params_forecast = {"latitude": lat, "longitude": lon, "hourly": "precipitation", "forecast_days": 3,
                                "timezone": "auto"}
-            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
+            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
             resp_forecast.raise_for_status()
             dados_forecast = resp_forecast.json().get('hourly', {}).get('precipitation', [])
             chuva_futura = sum(p for p in dados_forecast[:72] if p is not None)
@@ -285,30 +266,23 @@ def get_capitais_risco():
             params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_date_hist.strftime('%Y-%m-%d'),
                                  "end_date": end_date_hist.strftime('%Y-%m-%d'), "hourly": "precipitation",
                                  "timezone": "auto"}
-            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist, verify=False)
+            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist)
             resp_chuva_hist.raise_for_status()
             dados_chuva_hist_hourly = resp_chuva_hist.json().get('hourly', {}).get('precipitation', [])
-
             chuva_historica_completa = [p for p in dados_chuva_hist_hourly if p is not None][-72:]
             chuva_72h = sum(chuva_historica_completa)
             chuva_24h = sum(chuva_historica_completa[-24:])
-
             maior_risco = max(chuva_72h, chuva_futura)
             nivel_risco = determinar_nivel(maior_risco)
             camera_url = CAMERA_URLS.get(nome_capital)
-
-            dados_monitoramento.append({
-                "capital": nome_capital, "estado": capital['estado'], "lat": lat, "lon": lon,
-                "risco_nivel": nivel_risco, "maior_risco_valor": maior_risco,
-                "chuva_24h": chuva_24h, "chuva_72h": chuva_72h, "camera_url": camera_url
-            })
+            dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'], "lat": lat, "lon": lon,
+                                        "risco_nivel": nivel_risco, "maior_risco_valor": maior_risco,
+                                        "chuva_24h": chuva_24h, "chuva_72h": chuva_72h, "camera_url": camera_url})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] Erro para {nome_capital}: {e}")
-            dados_monitoramento.append({
-                "capital": nome_capital, "estado": capital['estado'],
-                "risco_nivel": {"nivel": "ERRO", "cor": "#999999"},
-                "maior_risco_valor": 0, "chuva_24h": 0, "chuva_72h": 0, "camera_url": None
-            })
+            dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'],
+                                        "risco_nivel": {"nivel": "ERRO", "cor": "#999999"}, "maior_risco_valor": 0,
+                                        "chuva_24h": 0, "chuva_72h": 0, "camera_url": None})
     return jsonify(dados_monitoramento)
 
 
@@ -322,14 +296,13 @@ def get_weather_data():
         start_hist = end_hist - timedelta(days=3)
         params_hist = {"latitude": lat, "longitude": lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                        "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
-        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, verify=False)
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
         resp_hist.raise_for_status()
         chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
-
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,windgusts_10m,surface_pressure,weather_code,precipitation,relative_humidity_2m,dewpoint_2m",
                            "forecast_days": 3, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
         resp_forecast.raise_for_status()
         hourly = resp_forecast.json().get('hourly', {})
 
@@ -361,7 +334,7 @@ def get_historical_pluvio_data():
     params = {"latitude": lat, "longitude": lon, "start_date": start_time_utc.strftime('%Y-%m-%d'),
               "end_date": end_time_utc.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
     try:
-        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params, verify=False)
+        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params)
         resp.raise_for_status()
         data = resp.json()
         precip = data.get('hourly', {}).get('precipitation', [])[-periodo_horas:]
@@ -382,7 +355,7 @@ def get_forecast_chart_data():
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,precipitation_probability,precipitation,dewpoint_2m,relative_humidity_2m,windspeed_10m,windgusts_10m,surface_pressure,weather_code",
                            "forecast_days": 7, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, verify=False)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
         resp_forecast.raise_for_status()
         dados_forecast = resp_forecast.json()
         dados_forecast['cidade_nome'] = nome_cidade_frontend
@@ -395,4 +368,3 @@ def get_forecast_chart_data():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
