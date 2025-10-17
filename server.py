@@ -6,6 +6,13 @@ from datetime import datetime, timedelta, timezone
 import calendar
 from dateutil.relativedelta import relativedelta
 
+# --- BIBLIOTECAS ADICIONADAS PARA E-MAIL E THREADING ---
+import smtplib
+import ssl
+from email.message import EmailMessage
+import threading  # Adicionado para tarefas em segundo plano
+import time  # Adicionado para a pausa entre e-mails
+
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPENMETEO_HISTORICAL_URL = "https://archive-api.open-meteo.com/v1/era5"
@@ -63,6 +70,156 @@ app = Flask(__name__, static_folder='web', static_url_path='')
 CORS(app)
 
 
+# --- FUNÇÕES DE E-MAIL (AGORA EM SEGUNDO PLANO) ---
+
+def get_sjc_weather_summary():
+    """Busca e retorna um dicionário com o resumo do tempo para SJC."""
+    sjc_lat = -23.1794
+    sjc_lon = -45.8872
+    try:
+        # 1. Buscar dados de previsão (futuro)
+        params_forecast = {
+            "latitude": sjc_lat, "longitude": sjc_lon,
+            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
+            "forecast_days": 3, "timezone": "auto"
+        }
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast.raise_for_status()
+        hourly = resp_forecast.json().get('hourly', {})
+
+        def get_val(key):
+            values = hourly.get(key)
+            return values[0] if values and len(values) > 0 else None
+
+        chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
+
+        # 2. Buscar dados de chuva histórica (passado)
+        end_hist = datetime.now(timezone.utc) - timedelta(days=1)
+        start_hist = end_hist - timedelta(days=3)
+        params_hist = {"latitude": sjc_lat, "longitude": sjc_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
+                       "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist.raise_for_status()
+        chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
+
+        # 3. Calcular o risco
+        maior_risco = max(chuva_hist, chuva_fut)
+        nivel_risco = determinar_nivel(maior_risco)
+
+        return {
+            "temperatura": get_val('temperature_2m'),
+            "sensacao_termica": get_val('apparent_temperature'),
+            "descricao_tempo": converter_codigo_tempo(get_val('weather_code')),
+            "chuva_72h_fut": chuva_fut,
+            "velocidade_vento": get_val('windspeed_10m'),
+            "umidade_relativa": get_val('relative_humidity_2m'),
+            "chuva_72h_hist": chuva_hist,
+            "risco_nivel": nivel_risco
+        }
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de SJC: {e}")
+        return None
+
+
+def send_emails_in_background():
+    """Função executada em uma thread para enviar os e-mails sem bloquear a aplicação."""
+    with app.app_context():  # Garante acesso ao contexto da aplicação na thread
+        # --- BUSCAR CREDENCIAIS ---
+        smtp_host = os.environ.get('ZOHO_SMTP_HOST')
+        smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 465))
+        sender_email = os.environ.get('ZOHO_EMAIL_USER')
+        sender_password = os.environ.get('ZOHO_EMAIL_PASS')
+        recipient_email = os.environ.get('NOTIFICATION_EMAIL')
+
+        if not all([smtp_host, sender_email, sender_password, recipient_email]):
+            print(f"[{datetime.now().isoformat()}] ERRO: Credenciais de e-mail não configuradas.")
+            return
+
+        agora = datetime.now(timezone.utc) - timedelta(hours=3)
+        agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
+
+        try:
+            context = ssl._create_unverified_context()
+            with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+                server.login(sender_email, sender_password)
+
+                # --- 1. ENVIAR E-MAIL DE NOTIFICAÇÃO DE ACESSO (AGORA EM HTML) ---
+                corpo_acesso_html = f"""
+                <html>
+                    <body>
+                        <p>Olá,</p>
+                        <p>Um novo acesso à plataforma <b>RiskGeo 360</b> foi registado.</p>
+                        <p><b>Data e Hora:</b> {agora_formatado}</p>
+                        <p>Este é um e-mail automático de notificação.</p>
+                    </body>
+                </html>
+                """
+                msg_acesso = EmailMessage()
+                msg_acesso.set_content("Novo acesso à plataforma RiskGeo 360.")  # Fallback para texto simples
+                msg_acesso.add_alternative(corpo_acesso_html, subtype='html')
+                msg_acesso['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
+                msg_acesso['From'] = sender_email
+                msg_acesso['To'] = recipient_email
+                server.send_message(msg_acesso)
+                print(f"[{datetime.now().isoformat()}] E-mail de ACESSO enviado com sucesso.")
+
+                # --- PAUSA DE SEGURANÇA ---
+                time.sleep(2)
+
+                # --- 2. BUSCAR DADOS E ENVIAR E-MAIL DE RESUMO DE SJC ---
+                resumo_sjc = get_sjc_weather_summary()
+                if resumo_sjc:
+                    temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get(
+                        'temperatura') is not None else "N/D"
+                    sensacao = f"{resumo_sjc.get('sensacao_termica'):.1f}°C" if resumo_sjc.get(
+                        'sensacao_termica') is not None else "N/D"
+                    humidade = f"{resumo_sjc.get('umidade_relativa')}%" if resumo_sjc.get(
+                        'umidade_relativa') is not None else "N/D"
+                    vento = f"{resumo_sjc.get('velocidade_vento'):.1f} km/h" if resumo_sjc.get(
+                        'velocidade_vento') is not None else "N/D"
+                    chuva_fut = f"{resumo_sjc.get('chuva_72h_fut'):.1f} mm" if resumo_sjc.get(
+                        'chuva_72h_fut') is not None else "N/D"
+                    chuva_hist = f"{resumo_sjc.get('chuva_72h_hist'):.1f} mm" if resumo_sjc.get(
+                        'chuva_72h_hist') is not None else "N/D"
+
+                    risco = resumo_sjc.get('risco_nivel', {})
+                    risco_nivel = risco.get('nivel', 'INDETERMINADO')
+                    risco_cor = risco.get('cor', '#999999')
+                    # Define a cor do texto para o nível de risco para garantir a legibilidade
+                    cor_texto_risco = "#000000" if risco_nivel == 'AMARELO' else "#FFFFFF"
+
+                    corpo_html = f"""
+                    <html>
+                        <body style="font-family: Arial, sans-serif;">
+                            <p>Olá,</p>
+                            <p>Segue o resumo das condições climáticas para <b>São José dos Campos</b>:</p>
+                            <ul style="list-style-type: none; padding-left: 0;">
+                                <li style="margin-bottom: 5px;"><b>Nível de Risco:</b> <span style="background-color: {risco_cor}; color: {cor_texto_risco}; padding: 3px 8px; border-radius: 4px; font-weight: bold;">{risco_nivel}</span></li>
+                                <li style="margin-bottom: 5px;"><b>Condição Atual:</b> {resumo_sjc.get('descricao_tempo', 'N/D')}</li>
+                                <li style="margin-bottom: 5px;"><b>Temperatura:</b> {temp}</li>
+                                <li style="margin-bottom: 5px;"><b>Sensação Térmica:</b> {sensacao}</li>
+                                <li style="margin-bottom: 5px;"><b>Humidade Relativa:</b> {humidade}</li>
+                                <li style="margin-bottom: 5px;"><b>Vento:</b> {vento}</li>
+                                <li style="margin-bottom: 5px;"><b>Chuva Acumulada (72h Histórico):</b> {chuva_hist}</li>
+                                <li style="margin-bottom: 5px;"><b>Previsão de Chuva (Próximas 72h):</b> {chuva_fut}</li>
+                            </ul>
+                            <p>Atenciosamente,<br>Sistema de Notificação RiskGeo</p>
+                        </body>
+                    </html>
+                    """
+                    msg_resumo = EmailMessage()
+                    msg_resumo.set_content("Por favor, ative o HTML para ver este e-mail.")
+                    msg_resumo.add_alternative(corpo_html, subtype='html')
+                    msg_resumo['Subject'] = f'Resumo Climático para São José dos Campos - {agora.strftime("%d/%m")}'
+                    msg_resumo['From'] = sender_email
+                    msg_resumo['To'] = recipient_email
+                    server.send_message(msg_resumo)
+                    print(f"[{datetime.now().isoformat()}] E-mail de RESUMO de SJC enviado com sucesso.")
+
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS: {e}")
+
+
 @app.route('/')
 def serve_welcome():
     return send_from_directory('web', 'welcome.html')
@@ -71,6 +228,15 @@ def serve_welcome():
 @app.route('/index.html')
 def serve_map_page():
     return send_from_directory('web', 'index.html')
+
+
+@app.route('/api/notify_access', methods=['POST'])
+def notify_access():
+    # Inicia a função de envio de e-mails em uma nova thread
+    email_thread = threading.Thread(target=send_emails_in_background)
+    email_thread.start()
+    # Retorna uma resposta imediata para não bloquear o utilizador
+    return jsonify({"status": "processamento iniciado"}), 202
 
 
 def converter_codigo_tempo(code):
@@ -97,9 +263,11 @@ def get_todos_os_pontos():
     pontos_unicos = list({ponto['nome']: ponto for ponto in todos_os_pontos}.values())
     return jsonify(pontos_unicos)
 
+
 @app.route('/api/cidades_risco', methods=['GET'])
 def get_cidades_risco():
     return jsonify(CIDADES_RISCO_MONITORADAS)
+
 
 @app.route('/api/capitais_risco', methods=['GET'])
 def get_capitais_risco():
@@ -171,7 +339,6 @@ def get_weather_data():
         hourly = resp_forecast.json().get('hourly', {})
 
         def get_val(key):
-            # Adicionado um tratamento para caso a chave não exista ou a lista esteja vazia
             values = hourly.get(key)
             return values[0] if values and len(values) > 0 else None
 

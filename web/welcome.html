@@ -69,5 +69,25 @@
         </div>
     </div>
 
+    <!-- SCRIPT PARA ENVIO DE E-MAIL EM SEGUNDO PLANO -->
+    <script>
+        const enterBtn = document.querySelector('.enter-btn');
+        if (enterBtn) {
+            enterBtn.addEventListener('click', (e) => {
+                // 1. Impede a navegação padrão para termos controle da ação
+                e.preventDefault();
+
+                // 2. Dispara a notificação por e-mail em segundo plano (sem esperar pela resposta)
+                // O navegador tentará completar esta solicitação mesmo que a página mude.
+                fetch('/api/notify_access', { method: 'POST' })
+                    .catch(err => console.error('Falha ao tentar notificar acesso em segundo plano:', err)); // Apenas registra o erro no console
+
+                // 3. Redireciona o usuário para a página principal IMEDIATAMENTE
+                window.location.href = enterBtn.href;
+            });
+        }
+    </script>
+
 </body>
 </html>
+
