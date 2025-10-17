@@ -6,6 +6,12 @@ from datetime import datetime, timedelta, timezone
 import calendar
 from dateutil.relativedelta import relativedelta
 
+# --- BIBLIOTECAS ADICIONADAS PARA E-MAIL ---
+import smtplib
+import ssl
+from email.message import EmailMessage
+import certifi
+
 # --- CONFIGURAÇÃO ---
 OPENMETEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPENMETEO_HISTORICAL_URL = "https://archive-api.open-meteo.com/v1/era5"
@@ -73,6 +79,45 @@ def serve_map_page():
     return send_from_directory('web', 'index.html')
 
 
+# --- NOVA ROTA PARA NOTIFICAR ACESSO POR E-MAIL ---
+@app.route('/api/notify_access', methods=['POST'])
+def notify_access():
+    # --- BUSCAR CREDENCIAIS DAS VARIÁVEIS DE AMBIENTE ---
+    smtp_host = os.environ.get('ZOHO_SMTP_HOST')
+    smtp_port = int(os.environ.get('ZOHO_SMTP_PORT', 465))
+    sender_email = os.environ.get('ZOHO_EMAIL_USER')
+    sender_password = os.environ.get('ZOHO_EMAIL_PASS')
+    recipient_email = os.environ.get('NOTIFICATION_EMAIL')
+
+    # --- VALIDAÇÃO ---
+    if not all([smtp_host, sender_email, sender_password, recipient_email]):
+        print(f"[{datetime.now().isoformat()}] ERRO: Credenciais de e-mail não configuradas corretamente nas variáveis de ambiente.")
+        return jsonify({"error": "Configuração de e-mail incompleta no servidor."}), 500
+
+    # --- CRIAR E-MAIL ---
+    agora = datetime.now(timezone.utc) - timedelta(hours=3) # Fuso de Brasília
+    agora_formatado = agora.strftime('%d/%m/%Y às %H:%M:%S')
+
+    msg = EmailMessage()
+    msg.set_content(f"Olá,\n\nUm novo acesso à plataforma RiskGeo 360 foi registrado em {agora_formatado}.\n\nAtenciosamente,\nSistema de Notificação RiskGeo")
+    msg['Subject'] = 'Aviso: Acesso à Plataforma RiskGeo 360'
+    msg['From'] = sender_email
+    msg['To'] = recipient_email
+
+    # --- ENVIAR E-MAIL ---
+    try:
+        # --- VERSÃO SEGURA PARA PRODUÇÃO (RENDER) ---
+        context = ssl.create_default_context(cafile=certifi.where())
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            print(f"[{datetime.now().isoformat()}] E-mail de notificação enviado com sucesso para {recipient_email}")
+            return jsonify({"success": "E-mail enviado."}), 200
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] FALHA AO ENVIAR E-MAIL: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 def converter_codigo_tempo(code):
     codes = {
         0: "Céu Limpo", 1: "Céu Parcialmente Nublado", 2: "Céu Nublado", 3: "Céu Encoberto",
@@ -97,6 +142,9 @@ def get_todos_os_pontos():
     pontos_unicos = list({ponto['nome']: ponto for ponto in todos_os_pontos}.values())
     return jsonify(pontos_unicos)
 
+@app.route('/api/cidades_risco', methods=['GET'])
+def get_cidades_risco():
+    return jsonify(CIDADES_RISCO_MONITORADAS)
 
 @app.route('/api/capitais_risco', methods=['GET'])
 def get_capitais_risco():
@@ -125,7 +173,7 @@ def get_capitais_risco():
 
             chuva_historica_completa = [p for p in dados_chuva_hist_hourly if p is not None][-72:]
             chuva_72h = sum(chuva_historica_completa)
-            chuva_24h = sum(chuva_historica_completa[-24:])
+            chuva_24h = sum(chuha_historica_completa[-24:])
 
             maior_risco = max(chuva_72h, chuva_futura)
             nivel_risco = determinar_nivel(maior_risco)
@@ -168,11 +216,13 @@ def get_weather_data():
         hourly = resp_forecast.json().get('hourly', {})
 
         def get_val(key):
-            return hourly.get(key, [None])[0]
+            # Adicionado um tratamento para caso a chave não exista ou a lista esteja vazia
+            values = hourly.get(key)
+            return values[0] if values and len(values) > 0 else None
 
         chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
         return jsonify(
-            {"temperatura": get_val('temperature_2m') or 0, "cidade_nome": nome_cidade, "chuva_72h_hist": chuva_hist,
+            {"temperatura": get_val('temperature_2m'), "cidade_nome": nome_cidade, "chuva_72h_hist": chuva_hist,
              "chuva_72h_fut": chuva_fut, "sensacao_termica": get_val('apparent_temperature'),
              "velocidade_vento": get_val('windspeed_10m'), "pressao": get_val('surface_pressure'),
              "descricao_tempo": converter_codigo_tempo(get_val('weather_code')),
@@ -228,3 +278,4 @@ def get_forecast_chart_data():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
