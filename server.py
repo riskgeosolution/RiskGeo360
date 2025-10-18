@@ -312,7 +312,7 @@ def send_daily_caragua_summary():
                 "subject": f'RiskGeo Resumo Diário: Caraguatatuba {agora.strftime("%d/%m/%Y")}',
                 "html_body": html_content, "text_body": "Resumo diário do tempo para Caraguatatuba."
             }
-            response = requests.post(api_url, json=payload)
+            response = requests.post(api_url, json=payload, timeout=10)
             if response.status_code == 200:
                 print(f"[{datetime.now().isoformat()}] E-mail AGENDADO de Caraguatatuba enviado com sucesso.")
             else:
@@ -356,18 +356,26 @@ def send_daily_ubatuba_sms():
                 "Content": message_content
             }
 
+            print(f"[{datetime.now().isoformat()}] Tentando enviar SMS para: {phone_number}")
+            print(f"[{datetime.now().isoformat()}] Payload: {payload}")
+
             try:
-                response = requests.post(api_url, data=payload, headers=headers)
+                response = requests.post(api_url, data=payload, headers=headers, timeout=10)
                 response.raise_for_status()
+
+                print(
+                    f"[{datetime.now().isoformat()}] Resposta da API Comtele (Status: {response.status_code}): {response.text}")
 
                 if response.json().get("Success", False):
                     print(f"[{datetime.now().isoformat()}] SMS AGENDADO de Ubatuba enviado com sucesso.")
                 else:
                     print(
-                        f"[{datetime.now().isoformat()}] FALHA (Agendado SMS) ao enviar SMS de Ubatuba: {response.text}")
+                        f"[{datetime.now().isoformat()}] FALHA (Agendado SMS) ao enviar SMS de Ubatuba: Resposta da API indica falha.")
 
             except requests.exceptions.RequestException as e:
                 print(f"[{datetime.now().isoformat()}] FALHA DE CONEXÃO (Agendado SMS) ao enviar SMS: {e}")
+                if e.response:
+                    print(f"[{datetime.now().isoformat()}] Detalhes da resposta de erro: {e.response.text}")
             except Exception as e:
                 print(f"[{datetime.now().isoformat()}] FALHA GERAL (Agendado SMS): {e}")
 
@@ -376,7 +384,7 @@ def run_scheduler():
     """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 16, 40  # Programado para 16:40
+    sms_hour, sms_minute = 16, 0
 
     last_sent_date_email = None
     last_sent_date_sms = None
@@ -386,17 +394,19 @@ def run_scheduler():
     print(f"    -> SMS (Ubatuba) será enviado diariamente às {sms_hour:02d}:{sms_minute:02d}.")
 
     while True:
-        now = datetime.now()
+        now_utc = datetime.now(timezone.utc)
+        brazil_tz = timezone(timedelta(hours=-3))
+        now_brazil = now_utc.astimezone(brazil_tz)
 
-        if now.date() != last_sent_date_email:
-            if now.hour == email_hour and now.minute == email_minute:
+        if now_brazil.date() != last_sent_date_email:
+            if now_brazil.hour == email_hour and now_brazil.minute == email_minute:
                 send_daily_caragua_summary()
-                last_sent_date_email = now.date()
+                last_sent_date_email = now_brazil.date()
 
-        if now.date() != last_sent_date_sms:
-            if now.hour == sms_hour and now.minute == sms_minute:
+        if now_brazil.date() != last_sent_date_sms:
+            if now_brazil.hour == sms_hour and now_brazil.minute == sms_minute:
                 send_daily_ubatuba_sms()
-                last_sent_date_sms = now.date()
+                last_sent_date_sms = now_brazil.date()
 
         time.sleep(60)
 
@@ -443,15 +453,15 @@ def get_capitais_risco():
         try:
             params_forecast = {"latitude": lat, "longitude": lon, "hourly": "precipitation", "forecast_days": 3,
                                "timezone": "auto"}
-            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+            resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, timeout=10)
             resp_forecast.raise_for_status()
             dados_forecast = resp_forecast.json().get('hourly', {}).get('precipitation', [])
             chuva_futura = sum(p for p in dados_forecast[:72] if p is not None)
 
-            params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_hist.strftime('%Y-%m-%d'),
+            params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_date_hist.strftime('%Y-%m-%d'),
                                  "end_date": end_date_hist.strftime('%Y-%m-%d'), "hourly": "precipitation",
                                  "timezone": "auto"}
-            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist)
+            resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist, timeout=10)
             resp_chuva_hist.raise_for_status()
             dados_chuva_hist_hourly = resp_chuva_hist.json().get('hourly', {}).get('precipitation', [])
             chuva_historica_completa = [p for p in dados_chuva_hist_hourly if p is not None][-72:]
@@ -460,6 +470,7 @@ def get_capitais_risco():
             maior_risco = max(chuva_72h, chuva_futura)
             nivel_risco = determinar_nivel(maior_risco)
             camera_url = CAMERA_URLS.get(nome_capital)
+            # --- CORREÇÃO DO ERRO DE DIGITAÇÃO AQUI ---
             dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'], "lat": lat, "lon": lon,
                                         "risco_nivel": nivel_risco, "maior_risco_valor": maior_risco,
                                         "chuva_24h": chuva_24h, "chuva_72h": chuva_72h,
@@ -482,13 +493,13 @@ def get_weather_data():
         start_hist = end_hist - timedelta(days=3)
         params_hist = {"latitude": lat, "longitude": lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                        "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
-        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist, timeout=10)
         resp_hist.raise_for_status()
         chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,windgusts_10m,surface_pressure,weather_code,precipitation,relative_humidity_2m,dewpoint_2m",
                            "forecast_days": 3, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, timeout=10)
         resp_forecast.raise_for_status()
         hourly = resp_forecast.json().get('hourly', {})
 
@@ -520,7 +531,7 @@ def get_historical_pluvio_data():
     params = {"latitude": lat, "longitude": lon, "start_date": start_time_utc.strftime('%Y-%m-%d'),
               "end_date": end_time_utc.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
     try:
-        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params)
+        resp = requests.get(OPENMETEO_HISTORICAL_URL, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         precip = data.get('hourly', {}).get('precipitation', [])[-periodo_horas:]
@@ -541,7 +552,7 @@ def get_forecast_chart_data():
         params_forecast = {"latitude": lat, "longitude": lon,
                            "hourly": "temperature_2m,apparent_temperature,precipitation_probability,precipitation,dewpoint_2m,relative_humidity_2m,windspeed_10m,windgusts_10m,surface_pressure,weather_code",
                            "forecast_days": 7, "timezone": "auto"}
-        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast, timeout=10)
         resp_forecast.raise_for_status()
         dados_forecast = resp_forecast.json()
         dados_forecast['cidade_nome'] = nome_cidade_frontend
