@@ -376,7 +376,7 @@ def run_scheduler():
     """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 16, 25  # Programado para 16:00
+    sms_hour, sms_minute = 16, 40  # Programado para 16:40
 
     last_sent_date_email = None
     last_sent_date_sms = None
