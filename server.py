@@ -188,7 +188,7 @@ def send_emails_in_background():
             print(f"[{datetime.now().isoformat()}] FALHA GERAL AO ENVIAR E-MAILS VIA API: {e}")
 
 
-# --- NOVAS FUNÇÕES PARA O E-MAIL AGENDADO DE CARAGUATATUBA ---
+# --- FUNÇÕES PARA E-MAIL (CARAGUATATUBA) E SMS (UBATUBA) AGENDADOS ---
 
 def get_caragua_weather_summary():
     """Busca dados climáticos para Caraguatatuba."""
@@ -222,6 +222,43 @@ def get_caragua_weather_summary():
                 "chuva_72h_hist": chuva_hist, "risco_nivel": nivel_risco}
     except Exception as e:
         print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de Caraguatatuba: {e}")
+        return None
+
+
+def get_ubatuba_weather_summary():
+    """Busca dados climáticos para Ubatuba."""
+    # Coordenadas de Ubatuba da lista CIDADES_RISCO_MONITORADAS
+    uba_lat, uba_lon = -23.433, -45.083
+    try:
+        params_forecast = {"latitude": uba_lat, "longitude": uba_lon,
+                           "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
+                           "forecast_days": 3, "timezone": "auto"}
+        resp_forecast = requests.get(OPENMETEO_FORECAST_URL, params=params_forecast)
+        resp_forecast.raise_for_status()
+        hourly = resp_forecast.json().get('hourly', {})
+
+        def get_val(key):
+            values = hourly.get(key)
+            return values[0] if values and len(values) > 0 else None
+
+        chuva_fut = sum(p for p in hourly.get('precipitation', [])[:72] if p is not None)
+        end_hist, start_hist = datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc) - timedelta(
+            days=4)
+        params_hist = {"latitude": uba_lat, "longitude": uba_lon, "start_date": start_hist.strftime('%Y-%m-%d'),
+                       "end_date": end_hist.strftime('%Y-%m-%d'), "hourly": "precipitation", "timezone": "auto"}
+        resp_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_hist)
+        resp_hist.raise_for_status()
+        chuva_hist = sum(p for p in resp_hist.json().get('hourly', {}).get('precipitation', [])[-72:] if p is not None)
+        maior_risco = max(chuva_hist, chuva_fut)
+        nivel_risco = determinar_nivel(maior_risco)
+
+        # Retorna os mesmos dados que a função de Caraguá
+        return {"temperatura": get_val('temperature_2m'), "sensacao_termica": get_val('apparent_temperature'),
+                "descricao_tempo": converter_codigo_tempo(get_val('weather_code')), "chuva_72h_fut": chuva_fut,
+                "velocidade_vento": get_val('windspeed_10m'), "umidade_relativa": get_val('relative_humidity_2m'),
+                "chuva_72h_hist": chuva_hist, "risco_nivel": nivel_risco}
+    except Exception as e:
+        print(f"[{datetime.now().isoformat()}] Erro ao buscar dados de Ubatuba: {e}")
         return None
 
 
@@ -266,7 +303,7 @@ def send_daily_caragua_summary():
         recipient_email = os.environ.get('NOTIFICATION_EMAIL')
         api_url = "https://api.smtp2go.com/v3/email/send"
         if not all([api_key, sender_email, recipient_email]):
-            print(f"[{datetime.now().isoformat()}] ERRO (Agendado): Configuração da API ou e-mails faltando.")
+            print(f"[{datetime.now().isoformat()}] ERRO (Agendado E-mail): Configuração da API ou e-mails faltando.")
             return
 
         resumo_caragua = get_caragua_weather_summary()
@@ -289,29 +326,96 @@ def send_daily_caragua_summary():
                 print(f"[{datetime.now().isoformat()}] E-mail AGENDADO de Caraguatatuba enviado com sucesso.")
             else:
                 print(
-                    f"[{datetime.now().isoformat()}] FALHA (Agendado) ao enviar e-mail de Caraguatatuba: {response.text}")
+                    f"[{datetime.now().isoformat()}] FALHA (Agendado E-mail) ao enviar e-mail de Caraguatatuba: {response.text}")
+
+
+def send_daily_ubatuba_sms():
+    """Envia o SMS de resumo diário para Ubatuba via Comtele."""
+    with app.app_context():
+        print(f"[{datetime.now().isoformat()}] Executando tarefa agendada: Resumo SMS Ubatuba.")
+
+        # Pega as variáveis de ambiente para o SMS
+        api_key = os.environ.get('COMTELE_API_KEY')
+        phone_number = os.environ.get('NOTIFICATION_PHONE')
+
+        # --- CORREÇÃO FINAL DA URL E HEADER ---
+        api_url = "https://sms.comtele.com.br/api/v2/send"
+
+        if not all([api_key, phone_number]):
+            print(
+                f"[{datetime.now().isoformat()}] ERRO (Agendado SMS): COMTELE_API_KEY ou NOTIFICATION_PHONE faltando.")
+            return
+
+        resumo_uba = get_ubatuba_weather_summary()
+        if resumo_uba:
+            # Formata os dados para um SMS curto
+            risco = resumo_uba.get('risco_nivel', {}).get('nivel', 'N/D')
+            temp = f"{resumo_uba.get('temperatura'):.1f}C" if resumo_uba.get('temperatura') is not None else "N/D"
+            chuva_hist = f"{resumo_uba.get('chuva_72h_hist'):.1f}mm" if resumo_uba.get(
+                'chuva_72h_hist') is not None else "N/D"
+            chuva_fut = f"{resumo_uba.get('chuva_72h_fut'):.1f}mm" if resumo_uba.get(
+                'chuva_72h_fut') is not None else "N/D"
+
+            # Monta a mensagem
+            message_content = f"RiskGeo Resumo Ubatuba:\nRisco: {risco}\nTemp: {temp}\nHist 72h: {chuva_hist}\nPrev 72h: {chuva_fut}"
+
+            headers = {
+                "auth-key": api_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "Sender": "RiskGeo",
+                "Receivers": phone_number,
+                "Content": message_content
+            }
+
+            try:
+                response = requests.post(api_url, json=payload, headers=headers)
+                response.raise_for_status()
+
+                if response.json().get("Success", False):
+                    print(f"[{datetime.now().isoformat()}] SMS AGENDADO de Ubatuba enviado com sucesso.")
+                else:
+                    print(
+                        f"[{datetime.now().isoformat()}] FALHA (Agendado SMS) ao enviar SMS de Ubatuba: {response.text}")
+
+            except requests.exceptions.RequestException as e:
+                print(f"[{datetime.now().isoformat()}] FALHA DE CONEXÃO (Agendado SMS) ao enviar SMS: {e}")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] FALHA GERAL (Agendado SMS): {e}")
 
 
 def run_scheduler():
-    """Verifica a cada minuto se é hora de enviar o e-mail agendado."""
-    # --- Altere a hora e o minuto aqui ---
-    scheduled_hour = 15  # Formato 24h (0-23)
-    scheduled_minute = 45  # Minuto (0-59)
-    # ------------------------------------
+    """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
-    last_sent_date = None
-    print(
-        f"[*] Agendador iniciado. E-mail de Caraguatatuba será enviado diariamente às {scheduled_hour:02d}:{scheduled_minute:02d}.")
+    # Horários para cada tarefa
+    email_hour, email_minute = 15, 45
+    sms_hour, sms_minute = 15, 45
+
+    # Variáveis de controle independentes
+    last_sent_date_email = None
+    last_sent_date_sms = None
+
+    print(f"[*] Agendador iniciado.")
+    print(f"    -> E-mail (Caraguá) será enviado diariamente às {email_hour:02d}:{email_minute:02d}.")
+    print(f"    -> SMS (Ubatuba) será enviado diariamente às {sms_hour:02d}:{sms_minute:02d}.")
 
     while True:
         now = datetime.now()
-        # Evita enviar múltiplas vezes no mesmo dia
-        if now.date() != last_sent_date:
-            if now.hour == scheduled_hour and now.minute == scheduled_minute:
-                send_daily_caragua_summary()
-                last_sent_date = now.date()  # Marca que o e-mail de hoje foi enviado
 
-        time.sleep(60)  # Espera 60 segundos antes de verificar novamente
+        # --- Bloco 1: Verificação do E-mail (Caraguatatuba) ---
+        if now.date() != last_sent_date_email:
+            if now.hour == email_hour and now.minute == email_minute:
+                send_daily_caragua_summary()
+                last_sent_date_email = now.date()
+
+        # --- Bloco 2: Verificação do SMS (Ubatuba) ---
+        if now.date() != last_sent_date_sms:
+            if now.hour == sms_hour and now.minute == sms_minute:
+                send_daily_ubatuba_sms()
+                last_sent_date_sms = now.date()
+
+        time.sleep(60)
 
 
 # --- ROTAS DA APLICAÇÃO ---
@@ -377,12 +481,13 @@ def get_capitais_risco():
             camera_url = CAMERA_URLS.get(nome_capital)
             dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'], "lat": lat, "lon": lon,
                                         "risco_nivel": nivel_risco, "maior_risco_valor": maior_risco,
-                                        "chuva_24h": chuva_24h, "chuva_72h": chuva_72h, "camera_url": camera_url})
+                                        "chuva_24h": chuva_24h, "chuva_72h": chuva_72h,
+                                        "chuva_72h_fut": chuva_futura, "camera_url": camera_url})
         except Exception as e:
             print(f"[{datetime.now().isoformat()}] Erro para {nome_capital}: {e}")
             dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'],
                                         "risco_nivel": {"nivel": "ERRO", "cor": "#999999"}, "maior_risco_valor": 0,
-                                        "chuva_24h": 0, "chuva_72h": 0, "camera_url": None})
+                                        "chuva_24h": 0, "chuva_72h": 0, "chuva_72h_fut": 0, "camera_url": None})
     return jsonify(dados_monitoramento)
 
 
@@ -473,5 +578,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     # Desativar o reloader do modo debug para evitar que o agendador execute duas vezes
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
-
-

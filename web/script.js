@@ -89,10 +89,9 @@ function showMap() {
     if(detalhesContainer) detalhesContainer.style.display = 'none';
     if(toggleDetalhesBtn) toggleDetalhesBtn.textContent = 'Ver Detalhes Adicionais';
 
-    // Se um estado anterior do mapa foi salvo, restaura-o
-    if (lastMapView) {
-        map.setView(lastMapView.center, lastMapView.zoom);
-    }
+    // --- ALTERAÇÃO SOLICITADA ---
+    // Redefine o mapa para a visualização inicial (zoom geral) ao invés de usar 'lastMapView'
+    map.setView([INITIAL_LATITUDE, INITIAL_LONGITUDE], ZOOM_LEVEL);
 
     // Garante que o mapa seja renderizado corretamente após a transição
     setTimeout(() => {
@@ -127,6 +126,12 @@ function renderCapitaisCards(capitais) {
         const riscoNivel = cidade.risco_nivel.nivel;
         const riscoTexto = riskTextMap[riscoNivel] || 'Indefinido';
         const cameraButton = cidade.camera_url ? `<a href="${cidade.camera_url}" target="_blank" class="camera-btn" style="background-color: #3f51b5; color: white; padding: 5px 10px; border-radius: 4px; text-decoration: none; font-size: 0.9em; margin-top: 10px; display: inline-block;">Ver Câmera</a>` : '';
+
+        // Verifica se 'chuva_72h_fut' existe e é um número antes de tentar formatá-lo.
+        const previsaoHtml = (cidade.chuva_72h_fut != null)
+            ? `<br><span>Prev. 72h: <strong>${cidade.chuva_72h_fut.toFixed(1)} mm</strong></span>`
+            : ''; // Se não existir, retorna uma string vazia.
+
         htmlContent += `
             <div class="capital-card">
                 <span class="card-city-name">${cidade.capital} (${cidade.estado})</span>
@@ -134,7 +139,7 @@ function renderCapitaisCards(capitais) {
                 <div class="card-details" style="font-size: 0.9em; color: #333; margin-top: 10px;">
                     <span>Acum. 24h: <strong>${cidade.chuva_24h.toFixed(1)} mm</strong></span><br>
                     <span>Acum. 72h: <strong>${cidade.chuva_72h.toFixed(1)} mm</strong></span>
-                </div>
+                    ${previsaoHtml} </div>
                 ${cameraButton}
             </div>`;
     });
@@ -356,4 +361,3 @@ window.addEventListener('resize', ajustarLayoutMobile);
 // INICIALIZAÇÃO
 processarNovoLocal(INITIAL_LATITUDE, INITIAL_LONGITUDE, "Brasília");
 fetchAndPlaceAllMarkers();
-
