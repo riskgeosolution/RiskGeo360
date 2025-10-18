@@ -4,4 +4,4 @@ python-dateutil
 gunicorn
 Flask-CORS
 certifi
-schedule
+sendgrid
