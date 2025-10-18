@@ -351,9 +351,9 @@ def send_daily_ubatuba_sms():
                 "Content-Type": "application/x-www-form-urlencoded"
             }
             payload = {
-                "Sender": "RiskGeo",
-                "Receivers": phone_number,
-                "Content": message_content
+                "Sender": str("RiskGeo"),
+                "Receivers": str(phone_number),
+                "Content": str(message_content)
             }
 
             print(f"[{datetime.now().isoformat()}] Tentando enviar SMS para: {phone_number}")
@@ -384,19 +384,24 @@ def run_scheduler():
     """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 17, 10
+    sms_hour, sms_minute = 17, 40
 
     last_sent_date_email = None
     last_sent_date_sms = None
 
     print(f"[*] Agendador iniciado.")
-    print(f"    -> E-mail (Caraguá) será enviado diariamente às {email_hour:02d}:{email_minute:02d}.")
-    print(f"    -> SMS (Ubatuba) será enviado diariamente às {sms_hour:02d}:{sms_minute:02d}.")
+    print(
+        f"    -> E-mail (Caraguá) será enviado diariamente às {email_hour:02d}:{email_minute:02d} (Horário de Brasília).")
+    print(f"    -> SMS (Ubatuba) será enviado diariamente às {sms_hour:02d}:{sms_minute:02d} (Horário de Brasília).")
 
     while True:
         now_utc = datetime.now(timezone.utc)
         brazil_tz = timezone(timedelta(hours=-3))
         now_brazil = now_utc.astimezone(brazil_tz)
+
+        # Adiciona um log a cada minuto para verificação no Render
+        print(
+            f"[{datetime.now().isoformat()}] Verificando agendador. Hora atual (Brasília): {now_brazil.strftime('%H:%M:%S')}")
 
         if now_brazil.date() != last_sent_date_email:
             if now_brazil.hour == email_hour and now_brazil.minute == email_minute:
@@ -470,7 +475,7 @@ def get_capitais_risco():
             maior_risco = max(chuva_72h, chuva_futura)
             nivel_risco = determinar_nivel(maior_risco)
             camera_url = CAMERA_URLS.get(nome_capital)
-            # --- CORREÇÃO DO ERRO DE DIGITAÇÃO AQUI ---
+
             dados_monitoramento.append({"capital": nome_capital, "estado": capital['estado'], "lat": lat, "lon": lon,
                                         "risco_nivel": nivel_risco, "maior_risco_valor": maior_risco,
                                         "chuva_24h": chuva_24h, "chuva_72h": chuva_72h,
