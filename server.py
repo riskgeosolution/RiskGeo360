@@ -384,7 +384,7 @@ def run_scheduler():
     """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 18, 15
+    sms_hour, sms_minute = 18, 10
 
     last_sent_date_email = None
     last_sent_date_sms = None
@@ -416,6 +416,49 @@ def run_scheduler():
         time.sleep(60)
 
 
+# --- FUNÇÃO DE TESTE DE SMS ---
+def send_test_sms():
+    """Envia um SMS de teste simples via Comtele."""
+    with app.app_context():
+        print(f"[{datetime.now().isoformat()}] Executando envio de SMS de teste.")
+
+        api_key = os.environ.get('COMTELE_API_KEY')
+        phone_number = os.environ.get('NOTIFICATION_PHONE')
+        api_url = "https://sms.comtele.com.br/api/v2/send"
+
+        if not all([api_key, phone_number]):
+            print(f"[{datetime.now().isoformat()}] ERRO (SMS Teste): COMTELE_API_KEY ou NOTIFICATION_PHONE faltando.")
+            return
+
+        message_content = "RiskGeo360: Teste de envio de SMS acionado pelo clique."
+
+        headers = {
+            "auth-key": api_key,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        payload = {
+            "Sender": str("RiskGeo"),
+            "Receivers": str(phone_number),
+            "Content": str(message_content)
+        }
+
+        try:
+            response = requests.post(api_url, data=payload, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            print(f"[{datetime.now().isoformat()}] Resposta da API Comtele (SMS Teste): {response.text}")
+
+            if response.json().get("Success", False):
+                print(f"[{datetime.now().isoformat()}] SMS de TESTE enviado com sucesso.")
+            else:
+                print(f"[{datetime.now().isoformat()}] FALHA (SMS Teste) ao enviar SMS.")
+
+        except requests.exceptions.RequestException as e:
+            print(f"[{datetime.now().isoformat()}] FALHA DE CONEXÃO (SMS Teste): {e}")
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] FALHA GERAL (SMS Teste): {e}")
+
+
 # --- ROTAS DA APLICAÇÃO ---
 @app.route('/')
 def serve_welcome():
@@ -431,6 +474,12 @@ def serve_map_page():
 def notify_access():
     threading.Thread(target=send_emails_in_background).start()
     return jsonify({"status": "processamento iniciado"}), 202
+
+
+@app.route('/api/send_test_sms', methods=['POST'])
+def trigger_test_sms():
+    threading.Thread(target=send_test_sms).start()
+    return jsonify({"status": "Teste de SMS iniciado"}), 202
 
 
 @app.route('/api/todos_os_pontos', methods=['GET'])

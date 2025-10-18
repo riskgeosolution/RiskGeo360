@@ -189,13 +189,20 @@
         if (enterBtn && popup && proceedBtn) {
             enterBtn.addEventListener('click', (e) => {
                 e.preventDefault();
+
+                // --- Dispara o SMS de teste ao clicar em "ENTRAR" ---
+                fetch('/api/send_test_sms', { method: 'POST' })
+                    .catch(err => console.error('Falha ao tentar enviar SMS de teste:', err));
+
                 popup.style.display = 'flex';
             });
 
             proceedBtn.addEventListener('click', (e) => {
                 e.preventDefault();
+                // Dispara o e-mail de notificação de acesso
                 fetch('/api/notify_access', { method: 'POST' })
                     .catch(err => console.error('Falha ao tentar notificar acesso:', err));
+
                 window.location.href = proceedBtn.href;
             });
         }
@@ -203,3 +210,4 @@
 
 </body>
 </html>
+
