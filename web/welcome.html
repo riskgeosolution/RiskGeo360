@@ -189,11 +189,6 @@
         if (enterBtn && popup && proceedBtn) {
             enterBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-
-                // --- Dispara o SMS de teste ao clicar em "ENTRAR" ---
-                fetch('/api/send_test_sms', { method: 'POST' })
-                    .catch(err => console.error('Falha ao tentar enviar SMS de teste:', err));
-
                 popup.style.display = 'flex';
             });
 
