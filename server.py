@@ -156,12 +156,6 @@ def send_emails_in_background():
             # 2. E-mail de Resumo de SJC (acionado no acesso)
             resumo_sjc = get_sjc_weather_summary()
             if resumo_sjc:
-                # (O restante do código para o resumo de SJC permanece o mesmo)
-                risco = resumo_sjc.get('risco_nivel', {})
-                temp = f"{resumo_sjc.get('temperatura'):.1f}°C" if resumo_sjc.get('temperatura') is not None else "N/D"
-                sensacao = f"{resumo_sjc.get('sensacao_termica'):.1f}°C" if resumo_sjc.get(
-                    'sensacao_termica') is not None else "N/D"
-                # ... (outras variáveis)
                 html_content_resumo = f"""
                 <html><body style="font-family: Arial, sans-serif;">
                     <p>Olá,</p>
@@ -194,7 +188,6 @@ def get_caragua_weather_summary():
     """Busca dados climáticos para Caraguatatuba."""
     caragua_lat, caragua_lon = -23.621, -45.413
     try:
-        # Lógica idêntica a get_sjc_weather_summary, apenas com lat/lon diferentes
         params_forecast = {"latitude": caragua_lat, "longitude": caragua_lon,
                            "hourly": "temperature_2m,apparent_temperature,windspeed_10m,weather_code,precipitation,relative_humidity_2m",
                            "forecast_days": 3, "timezone": "auto"}
@@ -227,7 +220,6 @@ def get_caragua_weather_summary():
 
 def get_ubatuba_weather_summary():
     """Busca dados climáticos para Ubatuba."""
-    # Coordenadas de Ubatuba da lista CIDADES_RISCO_MONITORADAS
     uba_lat, uba_lon = -23.433, -45.083
     try:
         params_forecast = {"latitude": uba_lat, "longitude": uba_lon,
@@ -252,7 +244,6 @@ def get_ubatuba_weather_summary():
         maior_risco = max(chuva_hist, chuva_fut)
         nivel_risco = determinar_nivel(maior_risco)
 
-        # Retorna os mesmos dados que a função de Caraguá
         return {"temperatura": get_val('temperature_2m'), "sensacao_termica": get_val('apparent_temperature'),
                 "descricao_tempo": converter_codigo_tempo(get_val('weather_code')), "chuva_72h_fut": chuva_fut,
                 "velocidade_vento": get_val('windspeed_10m'), "umidade_relativa": get_val('relative_humidity_2m'),
@@ -334,11 +325,9 @@ def send_daily_ubatuba_sms():
     with app.app_context():
         print(f"[{datetime.now().isoformat()}] Executando tarefa agendada: Resumo SMS Ubatuba.")
 
-        # Pega as variáveis de ambiente para o SMS
         api_key = os.environ.get('COMTELE_API_KEY')
         phone_number = os.environ.get('NOTIFICATION_PHONE')
 
-        # --- CORREÇÃO FINAL DA URL E HEADER ---
         api_url = "https://sms.comtele.com.br/api/v2/send"
 
         if not all([api_key, phone_number]):
@@ -348,7 +337,6 @@ def send_daily_ubatuba_sms():
 
         resumo_uba = get_ubatuba_weather_summary()
         if resumo_uba:
-            # Formata os dados para um SMS curto
             risco = resumo_uba.get('risco_nivel', {}).get('nivel', 'N/D')
             temp = f"{resumo_uba.get('temperatura'):.1f}C" if resumo_uba.get('temperatura') is not None else "N/D"
             chuva_hist = f"{resumo_uba.get('chuva_72h_hist'):.1f}mm" if resumo_uba.get(
@@ -356,12 +344,11 @@ def send_daily_ubatuba_sms():
             chuva_fut = f"{resumo_uba.get('chuva_72h_fut'):.1f}mm" if resumo_uba.get(
                 'chuva_72h_fut') is not None else "N/D"
 
-            # Monta a mensagem
             message_content = f"RiskGeo Resumo Ubatuba:\nRisco: {risco}\nTemp: {temp}\nHist 72h: {chuva_hist}\nPrev 72h: {chuva_fut}"
 
             headers = {
                 "auth-key": api_key,
-                "Content-Type": "application/json"
+                "Content-Type": "application/x-www-form-urlencoded"
             }
             payload = {
                 "Sender": "RiskGeo",
@@ -370,7 +357,7 @@ def send_daily_ubatuba_sms():
             }
 
             try:
-                response = requests.post(api_url, json=payload, headers=headers)
+                response = requests.post(api_url, data=payload, headers=headers)
                 response.raise_for_status()
 
                 if response.json().get("Success", False):
@@ -388,11 +375,9 @@ def send_daily_ubatuba_sms():
 def run_scheduler():
     """Verifica a cada minuto se é hora de enviar os resumos agendados."""
 
-    # Horários para cada tarefa
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 15, 45
+    sms_hour, sms_minute = 16, 25  # Programado para 16:00
 
-    # Variáveis de controle independentes
     last_sent_date_email = None
     last_sent_date_sms = None
 
@@ -403,13 +388,11 @@ def run_scheduler():
     while True:
         now = datetime.now()
 
-        # --- Bloco 1: Verificação do E-mail (Caraguatatuba) ---
         if now.date() != last_sent_date_email:
             if now.hour == email_hour and now.minute == email_minute:
                 send_daily_caragua_summary()
                 last_sent_date_email = now.date()
 
-        # --- Bloco 2: Verificação do SMS (Ubatuba) ---
         if now.date() != last_sent_date_sms:
             if now.hour == sms_hour and now.minute == sms_minute:
                 send_daily_ubatuba_sms()
@@ -423,8 +406,6 @@ def run_scheduler():
 def serve_welcome():
     return send_from_directory('web', 'welcome.html')
 
-
-# (O resto das rotas permanece o mesmo)
 
 @app.route('/index.html')
 def serve_map_page():
@@ -467,7 +448,7 @@ def get_capitais_risco():
             dados_forecast = resp_forecast.json().get('hourly', {}).get('precipitation', [])
             chuva_futura = sum(p for p in dados_forecast[:72] if p is not None)
 
-            params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_date_hist.strftime('%Y-%m-%d'),
+            params_chuva_hist = {"latitude": lat, "longitude": lon, "start_date": start_hist.strftime('%Y-%m-%d'),
                                  "end_date": end_date_hist.strftime('%Y-%m-%d'), "hourly": "precipitation",
                                  "timezone": "auto"}
             resp_chuva_hist = requests.get(OPENMETEO_HISTORICAL_URL, params=params_chuva_hist)
@@ -571,10 +552,9 @@ def get_forecast_chart_data():
 
 
 if __name__ == '__main__':
-    # Inicia o agendador em uma thread separada para não bloquear a aplicação
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
 
     port = int(os.environ.get('PORT', 5000))
-    # Desativar o reloader do modo debug para evitar que o agendador execute duas vezes
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+
