@@ -390,7 +390,7 @@ def run_scheduler():
 
     # Horários para cada tarefa
     email_hour, email_minute = 15, 45
-    sms_hour, sms_minute = 15, 45
+    sms_hour, sms_minute = 15, 59
 
     # Variáveis de controle independentes
     last_sent_date_email = None
